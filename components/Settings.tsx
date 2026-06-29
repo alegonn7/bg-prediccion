@@ -195,11 +195,16 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
   const [showPreds, setShowPreds] = useState(false)
   const [predsPage, setPredsPage] = useState(1)
   const [assetsPage, setAssetsPage] = useState(1)
-  const [predFilter, setPredFilter] = useState<'all' | 'with' | 'without'>('all')
+  const [predFilter,        setPredFilter]        = useState<'all' | 'with' | 'without'>('all')
+  const [predFilterHorizon, setPredFilterHorizon] = useState<0 | 1 | 7 | 14 | 30 | 60 | 90>(0)
   const active   = assets.filter(a => a.is_active)
   const inactive = assets.filter(a => !a.is_active)
 
-  const tickersWithPred = new Set(openPreds.map(p => p.ticker))
+  const tickersWithPred = new Set(
+    openPreds
+      .filter(p => predFilterHorizon === 0 || p.horizon_days === predFilterHorizon)
+      .map(p => p.ticker)
+  )
   const withCount    = active.filter(a =>  tickersWithPred.has(a.ticker)).length
   const withoutCount = active.filter(a => !tickersWithPred.has(a.ticker)).length
   const filteredActive = predFilter === 'with'
@@ -251,27 +256,51 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
             <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>
               Tickers
             </span>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {([
-                { key: 'all',     label: `Todos (${active.length})` },
-                { key: 'without', label: `Sin predicción (${withoutCount})` },
-                { key: 'with',    label: `Con predicción (${withCount})` },
-              ] as const).map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setPredFilter(key)}
-                  style={{
-                    padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
-                    fontFamily: MONO, fontSize: 10,
-                    border: `1px solid ${predFilter === key ? 'var(--text)' : 'var(--border)'}`,
-                    background: predFilter === key ? 'var(--text)' : 'var(--bg-muted)',
-                    color: predFilter === key ? 'var(--bg)' : 'var(--text-hint)',
-                    transition: 'all 0.12s',
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
+              {/* Fila 1: estado de predicción */}
+              <div style={{ display: 'flex', gap: 4 }}>
+                {([
+                  { key: 'all',     label: `Todos (${active.length})` },
+                  { key: 'without', label: `Sin pred. (${withoutCount})` },
+                  { key: 'with',    label: `Con pred. (${withCount})` },
+                ] as const).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => { setPredFilter(key); if (key === 'all') setPredFilterHorizon(0) }}
+                    style={{
+                      padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+                      fontFamily: MONO, fontSize: 10,
+                      border: `1px solid ${predFilter === key ? 'var(--text)' : 'var(--border)'}`,
+                      background: predFilter === key ? 'var(--text)' : 'var(--bg-muted)',
+                      color: predFilter === key ? 'var(--bg)' : 'var(--text-hint)',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* Fila 2: horizonte — solo visible cuando no es "Todos" */}
+              {predFilter !== 'all' && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {([0, 1, 7, 14, 30, 60, 90] as const).map(h => (
+                    <button
+                      key={h}
+                      onClick={() => setPredFilterHorizon(h)}
+                      style={{
+                        padding: '2px 8px', borderRadius: 5, cursor: 'pointer',
+                        fontFamily: MONO, fontSize: 10,
+                        border: `1px solid ${predFilterHorizon === h ? 'var(--text-muted)' : 'var(--border)'}`,
+                        background: predFilterHorizon === h ? 'var(--bg-muted)' : 'transparent',
+                        color: predFilterHorizon === h ? 'var(--text)' : 'var(--text-hint)',
+                        transition: 'all 0.12s',
+                      }}
+                    >
+                      {h === 0 ? 'todos' : `${h}d`}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
