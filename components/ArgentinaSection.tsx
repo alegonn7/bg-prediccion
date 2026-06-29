@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
-const CACHE_KEY = 'macro_arg_v2'
+const CACHE_KEY = 'macro_arg_v3'
 const CACHE_TTL_MS = 10 * 60 * 1000 // 10 min
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
