@@ -1,6 +1,7 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { AssetSuggestions } from './AssetSuggestions'
+import { ModelPerformance } from './ModelPerformance'
 import { Pagination } from './Pagination'
 
 const ASSETS_PAGE_SIZE = 8
@@ -703,6 +704,11 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
           ))}
         </div>
       )}
+
+      {/* ── RENDIMIENTO DE MODELOS ───────────────────────────── */}
+      <div style={{ marginTop: 20 }}>
+        <ModelPerformance />
+      </div>
     </section>
   )
 }
