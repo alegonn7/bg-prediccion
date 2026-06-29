@@ -3,7 +3,7 @@ import { useState, useTransition } from 'react'
 import { AssetSuggestions } from './AssetSuggestions'
 import { Pagination } from './Pagination'
 
-const ASSETS_PAGE_SIZE = 15
+const ASSETS_PAGE_SIZE = 8
 const PREDS_PAGE_SIZE  = 5
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
@@ -194,8 +194,18 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
   const [showPreds, setShowPreds] = useState(false)
   const [predsPage, setPredsPage] = useState(1)
   const [assetsPage, setAssetsPage] = useState(1)
+  const [predFilter, setPredFilter] = useState<'all' | 'with' | 'without'>('all')
   const active   = assets.filter(a => a.is_active)
   const inactive = assets.filter(a => !a.is_active)
+
+  const tickersWithPred = new Set(openPreds.map(p => p.ticker))
+  const withCount    = active.filter(a =>  tickersWithPred.has(a.ticker)).length
+  const withoutCount = active.filter(a => !tickersWithPred.has(a.ticker)).length
+  const filteredActive = predFilter === 'with'
+    ? active.filter(a =>  tickersWithPred.has(a.ticker))
+    : predFilter === 'without'
+    ? active.filter(a => !tickersWithPred.has(a.ticker))
+    : active
   const activePageItems  = active.slice((assetsPage - 1) * ASSETS_PAGE_SIZE, assetsPage * ASSETS_PAGE_SIZE)
   const predsPageItems   = openPreds.slice((predsPage - 1) * PREDS_PAGE_SIZE, predsPage * PREDS_PAGE_SIZE)
 
@@ -236,11 +246,35 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
 
         {/* Ticker chips */}
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
-            Tickers
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>
+              Tickers
+            </span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {([
+                { key: 'all',     label: `Todos (${active.length})` },
+                { key: 'without', label: `Sin predicción (${withoutCount})` },
+                { key: 'with',    label: `Con predicción (${withCount})` },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setPredFilter(key)}
+                  style={{
+                    padding: '3px 10px', borderRadius: 6, cursor: 'pointer',
+                    fontFamily: MONO, fontSize: 10,
+                    border: `1px solid ${predFilter === key ? 'var(--text)' : 'var(--border)'}`,
+                    background: predFilter === key ? 'var(--text)' : 'var(--bg-muted)',
+                    color: predFilter === key ? 'var(--bg)' : 'var(--text-hint)',
+                    transition: 'all 0.12s',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            {active.map(a => {
+            {filteredActive.map(a => {
               const sel = selectedTickers.has(a.ticker)
               return (
                 <button
