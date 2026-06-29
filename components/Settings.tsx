@@ -34,18 +34,26 @@ async function checkTicker(ticker: string): Promise<{ valid: boolean; suggestion
   }
 }
 
-async function callFn(slug: string, body: object) {
-  const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
-    method: 'POST',
-    headers: { 'Authorization': AUTH_HEADER, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return r.json()
+async function callFn(slug: string, body: object): Promise<any> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
+      method: 'POST',
+      headers: { 'Authorization': AUTH_HEADER, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const text = await r.text()
+    try { return JSON.parse(text) } catch { return { ok: false, error: `HTTP ${r.status}: ${text.slice(0, 120)}` } }
+  } catch (e) {
+    return { ok: false, error: String(e) }
+  }
 }
 
-async function callGet(slug: string) {
-  const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, { headers: { 'Authorization': AUTH_HEADER } })
-  return r.json()
+async function callGet(slug: string): Promise<any> {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, { headers: { 'Authorization': AUTH_HEADER } })
+    const text = await r.text()
+    try { return JSON.parse(text) } catch { return { assets: [] } }
+  } catch { return { assets: [] } }
 }
 
 function fmtSecs(s: number) {
@@ -115,7 +123,19 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
     const res = await callFn('asset-config', { action: 'toggle_active', asset_id: a.id, is_active: next })
     if (!res.ok) {
       setAssets(prev => prev.map(x => x.id === a.id ? { ...x, is_active: !next } : x))
-      flash('Error: ' + res.error, false)
+      flash('Error al ' + (next ? 'activar' : 'desactivar') + ': ' + (res.error ?? 'error desconocido'), false)
+    }
+  }
+
+  async function deleteAsset(a: Asset) {
+    if (!confirm(`¿Eliminar ${a.ticker} permanentemente? Esto borra todas sus predicciones e indicadores.`)) return
+    setAssets(prev => prev.filter(x => x.id !== a.id))
+    const res = await callFn('asset-config', { action: 'delete_asset', asset_id: a.id })
+    if (!res.ok) {
+      setAssets(prev => [...prev, a].sort((x, y) => x.ticker.localeCompare(y.ticker)))
+      flash('Error al eliminar: ' + (res.error ?? 'error desconocido'), false)
+    } else {
+      flash(`${a.ticker} eliminado`, true)
     }
   }
 
@@ -166,7 +186,7 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
       const ticker = tickers[i]
       setQueueState({ total: tickers.length, done: i, currentTicker: ticker, errors: [...errors] })
       const res = await callFn('crear-prediccion', { ticker, horizon_days: h })
-      if (!res.ok) errors.push(`${ticker}: ${res.error ?? 'error'}`)
+      if (!res.ok) errors.push(`${ticker}: ${res.error ?? 'error desconocido'}`)
     }
     setQueueState({ total: tickers.length, done: tickers.length, currentTicker: '', errors })
     setCreating(false)
@@ -332,8 +352,11 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
             </div>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-            {filteredActive.map(a => {
-              const sel = selectedTickers.has(a.ticker)
+            {active.map(a => {
+              const sel     = selectedTickers.has(a.ticker)
+              const hasPred = tickersWithPred.has(a.ticker)
+              // when a filter is active, dim the "other" group instead of hiding
+              const dimmed  = !creating && predFilter !== 'all' && (predFilter === 'with' ? !hasPred : hasPred)
               return (
                 <button
                   key={a.id}
@@ -342,11 +365,11 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
                   style={{
                     padding: '6px 13px', borderRadius: 7, cursor: 'pointer',
                     fontFamily: MONO, fontSize: 13, fontWeight: sel ? 700 : 400,
-                    border: `1px solid ${sel ? 'var(--text)' : 'var(--border)'}`,
-                    background: sel ? 'var(--text)' : 'var(--bg-muted)',
+                    border: `1px solid ${sel ? 'var(--text)' : hasPred ? 'rgba(34,197,94,0.35)' : 'var(--border)'}`,
+                    background: sel ? 'var(--text)' : hasPred ? 'rgba(34,197,94,0.06)' : 'var(--bg-muted)',
                     color: sel ? 'var(--bg)' : 'var(--text-muted)',
                     transition: 'all 0.12s',
-                    opacity: creating ? 0.5 : 1,
+                    opacity: creating ? 0.5 : dimmed ? 0.3 : 1,
                   }}
                 >
                   {a.ticker}
@@ -745,18 +768,25 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
           {inactive.map((a, i) => (
             <div key={a.id} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
-              padding: '12px 24px', opacity: 0.5,
+              padding: '12px 24px', opacity: 0.6,
               borderBottom: i < inactive.length - 1 ? '1px solid var(--border)' : undefined,
             }}>
               <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                 <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600 }}>{a.ticker}</span>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{a.name}</span>
               </div>
-              <button onClick={() => toggleAsset(a)} style={{
-                padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)',
-                background: 'var(--up-soft)', color: 'var(--up)',
-                fontFamily: MONO, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-              }}>Reactivar</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => toggleAsset(a)} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'var(--up-soft)', color: 'var(--up)',
+                  fontFamily: MONO, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                }}>Reactivar</button>
+                <button onClick={() => deleteAsset(a)} style={{
+                  padding: '5px 12px', borderRadius: 6, border: '1px solid var(--down)',
+                  background: 'var(--down-soft)', color: 'var(--down)',
+                  fontFamily: MONO, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                }}>Eliminar</button>
+              </div>
             </div>
           ))}
         </div>
