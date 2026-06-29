@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 
-const CACHE_KEY = 'macro_arg_v3'
+const CACHE_KEY = 'macro_arg_v4'
 const CACHE_TTL_MS = 10 * 60 * 1000 // 10 min
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
@@ -143,10 +143,28 @@ export function ArgentinaSectionClient() {
     setError(null)
     try {
       const supabase = createSupabase()
-      const { data: res, error: err } = await supabase.functions.invoke('macro-argentina')
+      const [{ data: res, error: err }, rpRoute] = await Promise.all([
+        supabase.functions.invoke('macro-argentina'),
+        fetch('/api/riesgo-pais').then(r => r.ok ? r.json() : null).catch(() => null),
+      ])
       if (err) throw new Error(err.message)
       if (!res?.ok) throw new Error(res?.error ?? 'Error desconocido')
-      console.log('[macro-arg] debug:', res._debug, '| riesgo_pais:', res.riesgo_pais)
+
+      // Override riesgo_pais with Ambito data if the Next.js route got through
+      if (rpRoute?.ok && rpRoute.data?.valor != null) {
+        const ambitoValor = parseInt(String(rpRoute.data.valor), 10)
+        if (!isNaN(ambitoValor) && ambitoValor > 0) {
+          const anterior = rpRoute.data.valor_cierre_anterior != null
+            ? parseInt(String(rpRoute.data.valor_cierre_anterior), 10) : null
+          res.riesgo_pais = {
+            valor: ambitoValor,
+            fecha: rpRoute.data.fecha ?? res.riesgo_pais?.fecha,
+            cambio_vs_anterior: anterior && !isNaN(anterior) ? ambitoValor - anterior : res.riesgo_pais?.cambio_vs_anterior,
+            source: 'ambito',
+          }
+        }
+      }
+      console.log('[macro-arg] riesgo_pais:', res.riesgo_pais, '| rpRoute:', rpRoute)
       setData(res as MacroData)
       localStorage.setItem(CACHE_KEY, JSON.stringify({ payload: res, at: Date.now() }))
     } catch (e: any) {
