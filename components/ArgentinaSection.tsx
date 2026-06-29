@@ -146,6 +146,7 @@ export function ArgentinaSectionClient() {
       const { data: res, error: err } = await supabase.functions.invoke('macro-argentina')
       if (err) throw new Error(err.message)
       if (!res?.ok) throw new Error(res?.error ?? 'Error desconocido')
+      console.log('[macro-arg] debug:', res._debug, '| riesgo_pais:', res.riesgo_pais)
       setData(res as MacroData)
       localStorage.setItem(CACHE_KEY, JSON.stringify({ payload: res, at: Date.now() }))
     } catch (e: any) {
