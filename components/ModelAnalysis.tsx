@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import type { ModelDetailStat } from '@/app/page'
+import { ModelPerformance } from './ModelPerformance'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 
@@ -164,7 +165,18 @@ function ModelRow({ stat, rank, expanded, onToggle }: {
           borderBottom: '1px solid var(--border)',
           background: 'var(--bg-muted)',
           padding: '0 20px 20px',
+          position: 'relative',
         }}>
+          <button
+            onClick={onToggle}
+            style={{
+              position: 'absolute', top: 10, right: 14,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontFamily: MONO, fontSize: 16, color: 'var(--text-hint)',
+              lineHeight: 1, padding: '2px 6px', borderRadius: 4,
+            }}
+            title="Cerrar"
+          >×</button>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20, paddingTop: 16 }}>
 
             {/* Calibración de confianza */}
@@ -394,6 +406,10 @@ export function ModelAnalysisSection({ stats }: { stats: ModelDetailStat[] }) {
         Clic en cualquier fila para ver calibración de confianza, sesgo direccional y rendimiento por activo.
         Los puntos recientes son verde=acertó, rojo=falló, opacidad=confianza del modelo.
       </p>
+
+      <div style={{ marginTop: 32 }}>
+        <ModelPerformance />
+      </div>
     </section>
   )
 }

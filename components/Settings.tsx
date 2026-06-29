@@ -1,7 +1,6 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { AssetSuggestions } from './AssetSuggestions'
-import { ModelPerformance } from './ModelPerformance'
 import { Pagination } from './Pagination'
 
 const ASSETS_PAGE_SIZE = 8
@@ -253,9 +252,38 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
         {/* Ticker chips */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-            <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>
-              Tickers
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>
+                Tickers
+              </span>
+              {filteredActive.length > 0 && !creating && (() => {
+                const allSel = filteredActive.every(a => selectedTickers.has(a.ticker))
+                return (
+                  <button
+                    onClick={() => {
+                      if (allSel) {
+                        setSelectedTickers(prev => {
+                          const next = new Set(prev)
+                          filteredActive.forEach(a => next.delete(a.ticker))
+                          return next
+                        })
+                      } else {
+                        setSelectedTickers(prev => new Set([...prev, ...filteredActive.map(a => a.ticker)]))
+                      }
+                    }}
+                    style={{
+                      padding: '2px 8px', borderRadius: 5, cursor: 'pointer',
+                      fontFamily: MONO, fontSize: 10,
+                      border: '1px solid var(--border)',
+                      background: 'transparent',
+                      color: 'var(--text-hint)',
+                    }}
+                  >
+                    {allSel ? 'deseleccionar' : `seleccionar ${filteredActive.length}`}
+                  </button>
+                )
+              })()}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
               {/* Fila 1: estado de predicción */}
               <div style={{ display: 'flex', gap: 4 }}>
@@ -734,10 +762,6 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
         </div>
       )}
 
-      {/* ── RENDIMIENTO DE MODELOS ───────────────────────────── */}
-      <div style={{ marginTop: 20 }}>
-        <ModelPerformance />
-      </div>
     </section>
   )
 }
