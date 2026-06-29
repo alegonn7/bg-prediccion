@@ -143,24 +143,9 @@ export function ArgentinaSectionClient() {
     setError(null)
     try {
       const supabase = createSupabase()
-      const [{ data: res, error: err }, rpRoute] = await Promise.all([
-        supabase.functions.invoke('macro-argentina'),
-        fetch('/api/riesgo-pais').then(r => r.ok ? r.json() : null).catch(() => null),
-      ])
+      const { data: res, error: err } = await supabase.functions.invoke('macro-argentina')
       if (err) throw new Error(err.message)
       if (!res?.ok) throw new Error(res?.error ?? 'Error desconocido')
-
-      // Override riesgo_pais with fresher data if the Next.js route got through
-      if (rpRoute?.ok && rpRoute.valor != null) {
-        const anterior = rpRoute.valor_cierre_anterior
-        res.riesgo_pais = {
-          valor: rpRoute.valor,
-          fecha: rpRoute.fecha ?? res.riesgo_pais?.fecha,
-          cambio_vs_anterior: anterior != null ? rpRoute.valor - anterior : res.riesgo_pais?.cambio_vs_anterior,
-          source: rpRoute.source ?? 'route',
-        }
-      }
-      console.log('[macro-arg] riesgo_pais:', res.riesgo_pais, '| rpRoute:', rpRoute)
       setData(res as MacroData)
       localStorage.setItem(CACHE_KEY, JSON.stringify({ payload: res, at: Date.now() }))
     } catch (e: any) {

@@ -9,9 +9,10 @@ import { SettingsSection } from './Settings'
 import { ModelAnalysisSection } from './ModelAnalysis'
 import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
+import { IntradaySectionClient } from './IntradaySection'
 import type { ModelDetailStat } from '@/app/page'
 
-type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina'
+type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday'
 
 type Props = {
   open: any[]
@@ -60,7 +61,7 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
               fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
               color: 'var(--text-hint)', marginBottom: 14,
             }}>
-              Motor de Predicciones Auditadas · 16 modelos · Tiempo real
+              Motor de Predicciones Auditadas · 16 modelos diarios + 13 intradiarios · Tiempo real
             </div>
             <h1 style={{ fontSize: 30, lineHeight: 1.18, fontWeight: 600, letterSpacing: '-0.02em', margin: '0 0 12px' }}>
               ¿Puede la IA predecir el mercado?
@@ -80,15 +81,17 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
           <button onClick={() => setActive('open')} style={tabStyle(active === 'open')}>
             02 · Activas{open.length > 0 ? ` (${open.length})` : ''}
           </button>
-          <button onClick={() => setActive('news')}      style={tabStyle(active === 'news')}>03 · Noticias</button>
-          <button onClick={() => setActive('argentina')} style={tabStyle(active === 'argentina')}>04 · Argentina</button>
-          <button onClick={() => setActive('analysis')}  style={tabStyle(active === 'analysis')}>05 · Análisis</button>
-          <button onClick={() => setActive('closed')}   style={tabStyle(active === 'closed')}>06 · Historial</button>
-          <button onClick={() => setActive('settings')}  style={tabStyle(active === 'settings')}>07 · Configurar</button>
+          <button onClick={() => setActive('intraday')} style={tabStyle(active === 'intraday')}>03 · Intradiario</button>
+          <button onClick={() => setActive('news')}      style={tabStyle(active === 'news')}>04 · Noticias</button>
+          <button onClick={() => setActive('argentina')} style={tabStyle(active === 'argentina')}>05 · Argentina</button>
+          <button onClick={() => setActive('analysis')}  style={tabStyle(active === 'analysis')}>06 · Análisis</button>
+          <button onClick={() => setActive('closed')}   style={tabStyle(active === 'closed')}>07 · Historial</button>
+          <button onClick={() => setActive('settings')}  style={tabStyle(active === 'settings')}>08 · Configurar</button>
         </nav>
 
         {active === 'scorecard' && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} />}
         {active === 'open'      && <OpenPredictionsSection predictions={open} />}
+        {active === 'intraday'  && <IntradaySectionClient />}
         {active === 'closed'    && <ClosedPredictionsSection results={closed} />}
         {active === 'settings'  && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
         {active === 'analysis'  && <ModelAnalysisSection stats={modelDetailStats} />}
