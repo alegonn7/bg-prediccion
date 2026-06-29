@@ -1,5 +1,5 @@
 'use client'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { PredictionDetailModal } from './PredictionDetailModal'
 import { InfoTip } from './InfoTip'
 import { Pagination } from './Pagination'
@@ -7,8 +7,12 @@ import { Pagination } from './Pagination'
 const PAGE_SIZE = 9
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const AUTH_HEADER  = 'Bearer ' + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const AUTH_HEADER   = 'Bearer ' + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const FINNHUB_KEY   = 'd8vg3fhr01qgrv4numtgd8vg3fhr01qgrv4numu0'
+const LIVE_POLL_MS  = 10 * 60 * 1000   // 10 minutes
+
+type LivePrice = { price: number; changePct: number | null; fetchedAt: number }
 
 async function callFn(slug: string, body: object) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
@@ -86,6 +90,51 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
   const [deleting,       setDeleting]       = useState<string | null>(null)
   const [page,           setPage]           = useState(1)
 
+  // ── Live price polling ────────────────────────────────────────────────────
+  const [livePrices,    setLivePrices]    = useState<Record<string, LivePrice>>({})
+  const [liveLoading,   setLiveLoading]   = useState(false)
+  const [lastLiveFetch, setLastLiveFetch] = useState<number | null>(null)
+
+  const tickers = useMemo(
+    () => [...new Set(predictions.map(p => p.assets?.ticker).filter(Boolean) as string[])],
+    [predictions]
+  )
+
+  const fetchLivePrices = useCallback(async () => {
+    if (!tickers.length) return
+    setLiveLoading(true)
+    try {
+      const results = await Promise.allSettled(
+        tickers.map(async ticker => {
+          const r = await fetch(
+            `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`
+          )
+          const d = await r.json()
+          return { ticker, price: d.c as number, changePct: d.dp as number | null }
+        })
+      )
+      const now = Date.now()
+      setLivePrices(prev => {
+        const next = { ...prev }
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value.price > 0) {
+            next[r.value.ticker] = { price: r.value.price, changePct: r.value.changePct ?? null, fetchedAt: now }
+          }
+        }
+        return next
+      })
+      setLastLiveFetch(now)
+    } finally {
+      setLiveLoading(false)
+    }
+  }, [tickers.join(',')])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    fetchLivePrices()
+    const id = setInterval(fetchLivePrices, LIVE_POLL_MS)
+    return () => clearInterval(id)
+  }, [fetchLivePrices])
+
   async function handleDelete(id: string) {
     if (confirming !== id) { setConfirming(id); return }
     setDeleting(id)
@@ -138,7 +187,7 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
   return (
     <section style={{ marginBottom: 64 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>02</span>
         <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
           Predicciones activas
@@ -146,6 +195,28 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>
           {visible.length}{visible.length !== predictions.length ? `/${predictions.length}` : ''}
         </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {lastLiveFetch && (
+            <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                background: liveLoading ? 'var(--text-hint)' : 'var(--up)',
+                boxShadow: liveLoading ? 'none' : '0 0 0 2px rgba(34,197,94,0.25)',
+              }} />
+              {liveLoading ? 'actualizando…' : `precios hace ${Math.round((Date.now() - lastLiveFetch) / 60000)}min`}
+            </span>
+          )}
+          <button
+            onClick={fetchLivePrices}
+            disabled={liveLoading}
+            style={{
+              background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+              fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)',
+              padding: '3px 8px', cursor: liveLoading ? 'default' : 'pointer',
+              opacity: liveLoading ? 0.5 : 1,
+            }}
+          >↻ precio</button>
+        </div>
       </div>
 
       {predictions.length === 0 ? (
@@ -208,6 +279,7 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
                 {visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(p => (
                   <ConsensusCard
                     key={p.id} p={p}
+                    livePrice={livePrices[p.assets?.ticker ?? ''] ?? null}
                     onClick={() => setSelected(p)}
                     onDelete={() => handleDelete(p.id)}
                     isConfirming={confirming === p.id}
@@ -229,7 +301,10 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
 
       {selected && (
         <PredictionDetailModal
-          prediction={selected}
+          prediction={{
+            ...selected,
+            current_price: livePrices[selected.assets?.ticker ?? '']?.price ?? selected.current_price,
+          }}
           onClose={() => setSelected(null)}
         />
       )}
@@ -237,8 +312,9 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
   )
 }
 
-function ConsensusCard({ p, onClick, onDelete, onCancelDelete, isConfirming, isDeleting }: {
+function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting }: {
   p: ConsensusPrediction
+  livePrice: LivePrice | null
   onClick: () => void
   onDelete: () => void
   onCancelDelete: () => void
@@ -252,8 +328,10 @@ function ConsensusCard({ p, onClick, onDelete, onCancelDelete, isConfirming, isD
   const agreePct = p.agreement_pct ?? 0
   const dirColor = up ? 'var(--up)' : 'var(--down)'
   const dirSoft  = up ? 'var(--up-soft)' : 'var(--down-soft)'
-  const movePct = p.current_price != null
-    ? ((p.current_price - p.price_at_creation) / p.price_at_creation) * 100
+  const displayPrice = livePrice?.price ?? p.current_price
+  const isLive = livePrice != null
+  const movePct = displayPrice != null
+    ? ((displayPrice - p.price_at_creation) / p.price_at_creation) * 100
     : null
 
   return (
@@ -345,10 +423,22 @@ function ConsensusCard({ p, onClick, onDelete, onCancelDelete, isConfirming, isD
           <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 500 }}>${p.price_at_creation?.toFixed(2)}</div>
         </div>
         <div style={{ flex: 1, padding: '0 14px' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 3 }}>{p.current_price != null ? 'Hoy' : 'Precio actual'}</div>
-          <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 500 }}>
-            {p.current_price != null ? `$${p.current_price.toFixed(2)}` : '—'}
+          <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 5 }}>
+            {isLive ? (
+              <>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--up)', display: 'inline-block', boxShadow: '0 0 0 2px rgba(34,197,94,0.2)' }} />
+                Ahora
+              </>
+            ) : (displayPrice != null ? 'Último' : '—')}
           </div>
+          <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 500 }}>
+            {displayPrice != null ? `$${displayPrice.toFixed(2)}` : '—'}
+          </div>
+          {isLive && livePrice.changePct != null && (
+            <div style={{ fontFamily: MONO, fontSize: 10, color: livePrice.changePct >= 0 ? 'var(--up)' : 'var(--down)', marginTop: 1 }}>
+              {livePrice.changePct >= 0 ? '+' : ''}{livePrice.changePct.toFixed(2)}% hoy
+            </div>
+          )}
         </div>
       </div>
 
