@@ -150,18 +150,14 @@ export function ArgentinaSectionClient() {
       if (err) throw new Error(err.message)
       if (!res?.ok) throw new Error(res?.error ?? 'Error desconocido')
 
-      // Override riesgo_pais with Ambito data if the Next.js route got through
-      if (rpRoute?.ok && rpRoute.data?.valor != null) {
-        const ambitoValor = parseInt(String(rpRoute.data.valor), 10)
-        if (!isNaN(ambitoValor) && ambitoValor > 0) {
-          const anterior = rpRoute.data.valor_cierre_anterior != null
-            ? parseInt(String(rpRoute.data.valor_cierre_anterior), 10) : null
-          res.riesgo_pais = {
-            valor: ambitoValor,
-            fecha: rpRoute.data.fecha ?? res.riesgo_pais?.fecha,
-            cambio_vs_anterior: anterior && !isNaN(anterior) ? ambitoValor - anterior : res.riesgo_pais?.cambio_vs_anterior,
-            source: 'ambito',
-          }
+      // Override riesgo_pais with fresher data if the Next.js route got through
+      if (rpRoute?.ok && rpRoute.valor != null) {
+        const anterior = rpRoute.valor_cierre_anterior
+        res.riesgo_pais = {
+          valor: rpRoute.valor,
+          fecha: rpRoute.fecha ?? res.riesgo_pais?.fecha,
+          cambio_vs_anterior: anterior != null ? rpRoute.valor - anterior : res.riesgo_pais?.cambio_vs_anterior,
+          source: rpRoute.source ?? 'route',
         }
       }
       console.log('[macro-arg] riesgo_pais:', res.riesgo_pais, '| rpRoute:', rpRoute)
