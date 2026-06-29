@@ -40,6 +40,7 @@ type ConsensusPrediction = {
   models_neutral: number
   models_total: number
   final_pct_predicted: number
+  current_price: number | null
   price_path: PriceBand[] | null
   model_prediction_ids: string[] | null
   assets: { ticker: string; name: string; asset_class: string; currency: string } | null
