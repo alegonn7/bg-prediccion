@@ -215,7 +215,7 @@ export function NewsSectionClient() {
     setError(null)
     try {
       const supabase = createSupabase()
-      const { data: res, error: err } = await supabase.functions.invoke('noticias-mercado')
+      const { data: res, error: err } = await supabase.functions.invoke('noticias-mercado', force ? { body: { force: true } } : undefined)
       if (err) throw new Error(err.message)
       if (!res?.ok) throw new Error(res?.error ?? 'Error desconocido')
       if (res.gemini_error) console.warn('[noticias] Gemini error:', res.gemini_error)

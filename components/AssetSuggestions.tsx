@@ -123,6 +123,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
     fetch(`${SUPABASE_URL}/functions/v1/sugeridor`, {
       method: 'POST',
       headers: { 'Authorization': AUTH_HEADER, 'Content-Type': 'application/json' },
+      body: force ? JSON.stringify({ force: true }) : undefined,
     })
       .then(r => r.json())
       .then(d => {

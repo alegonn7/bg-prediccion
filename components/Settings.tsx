@@ -4,15 +4,35 @@ import { AssetSuggestions } from './AssetSuggestions'
 import { Pagination } from './Pagination'
 
 const ASSETS_PAGE_SIZE = 15
+const PREDS_PAGE_SIZE  = 5
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const AUTH_HEADER   = 'Bearer ' + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-const SECS_PER_PRED = 10  // estimado conservador por predicción (s)
+const SECS_PER_PRED = 10
+const FINNHUB_KEY   = 'd8vg3fhr01qgrv4numtgd8vg3fhr01qgrv4numu0'
 
 type Asset    = { id: string; ticker: string; name: string; sector: string | null; asset_class: string; currency: string; is_active: boolean; horizon_days: number }
 type OpenPred = { id: string; ticker: string; horizon_days: number; direction: string; confidence: number; agreement_pct: number; final_pct_predicted: number; target_date: string; created_at: string }
 type QueueState = { total: number; done: number; currentTicker: string; errors: string[] }
+type TickerHint = { status: 'idle' | 'checking' | 'suggestions' | 'not_found'; suggestions?: { symbol: string; description: string }[] }
+
+async function checkTicker(ticker: string): Promise<{ valid: boolean; suggestions: { symbol: string; description: string }[] }> {
+  try {
+    const res  = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`)
+    const data = await res.json()
+    const results = (data.result ?? []) as { displaySymbol?: string; symbol: string; description: string; type: string }[]
+    const exact = results.some(r => (r.displaySymbol ?? r.symbol).toUpperCase() === ticker.toUpperCase())
+    if (exact) return { valid: true, suggestions: [] }
+    const suggestions = results
+      .filter(r => r.type === 'Common Stock' || r.type === 'ETP')
+      .slice(0, 3)
+      .map(r => ({ symbol: r.displaySymbol ?? r.symbol, description: r.description }))
+    return { valid: false, suggestions }
+  } catch {
+    return { valid: true, suggestions: [] } // on error don't block
+  }
+}
 
 async function callFn(slug: string, body: object) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${slug}`, {
@@ -67,11 +87,26 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
     })
   }
 
-  function addCustomTicker() {
+  async function addCustomTicker() {
     const t = customInput.toUpperCase().trim()
     if (!t) return
-    setSelectedTickers(prev => new Set([...prev, t]))
+    setCustomHint({ status: 'checking' })
+    const { valid, suggestions } = await checkTicker(t)
+    if (valid) {
+      setCustomHint({ status: 'idle' })
+      setSelectedTickers(prev => new Set([...prev, t]))
+      setCustomInput('')
+    } else if (suggestions.length > 0) {
+      setCustomHint({ status: 'suggestions', suggestions })
+    } else {
+      setCustomHint({ status: 'not_found' })
+    }
+  }
+
+  function applyCustomTicker(symbol: string) {
+    setSelectedTickers(prev => new Set([...prev, symbol]))
     setCustomInput('')
+    setCustomHint({ status: 'idle' })
   }
 
   async function toggleAsset(a: Asset) {
@@ -84,17 +119,38 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
     }
   }
 
+  async function doAddAsset(ticker: string, name: string) {
+    const res = await callFn('asset-config', { action: 'add_asset', ticker, name: name || ticker })
+    if (!res.ok) { flash('Error: ' + res.error, false); return }
+    setNewTicker(''); setNewName(''); setAssetHint({ status: 'idle' })
+    const data = await callGet('asset-config')
+    setAssets(data.assets ?? assets)
+    flash(res.reactivated ? `${ticker} reactivado` : `${ticker} agregado`, true)
+  }
+
   function addAsset() {
     const ticker = newTicker.toUpperCase().trim()
     if (!ticker) return
     startAdd(async () => {
-      const res = await callFn('asset-config', { action: 'add_asset', ticker, name: newName || ticker })
-      if (!res.ok) { flash('Error: ' + res.error, false); return }
-      setNewTicker(''); setNewName('')
-      const data = await callGet('asset-config')
-      setAssets(data.assets ?? assets)
-      flash(res.reactivated ? `${ticker} reactivado` : `${ticker} agregado`, true)
+      setAssetHint({ status: 'checking' })
+      const { valid, suggestions } = await checkTicker(ticker)
+      if (!valid && suggestions.length > 0) { setAssetHint({ status: 'suggestions', suggestions }); return }
+      if (!valid)                             { setAssetHint({ status: 'not_found' }); return }
+      setAssetHint({ status: 'idle' })
+      await doAddAsset(ticker, newName)
     })
+  }
+
+  function applyAssetTicker(symbol: string) {
+    setAssetHint({ status: 'idle' })
+    startAdd(() => doAddAsset(symbol, newName || symbol))
+  }
+
+  function forceAddAsset() {
+    const ticker = newTicker.toUpperCase().trim()
+    if (!ticker) return
+    setAssetHint({ status: 'idle' })
+    startAdd(() => doAddAsset(ticker, newName))
   }
 
   async function crearPredicciones() {
@@ -131,11 +187,17 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
     }, 1500)
   }
 
+  const [customHint, setCustomHint] = useState<TickerHint>({ status: 'idle' })
+  const [assetHint,  setAssetHint]  = useState<TickerHint>({ status: 'idle' })
+
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [showPreds, setShowPreds] = useState(false)
+  const [predsPage, setPredsPage] = useState(1)
   const [assetsPage, setAssetsPage] = useState(1)
   const active   = assets.filter(a => a.is_active)
   const inactive = assets.filter(a => !a.is_active)
-  const activePageItems = active.slice((assetsPage - 1) * ASSETS_PAGE_SIZE, assetsPage * ASSETS_PAGE_SIZE)
+  const activePageItems  = active.slice((assetsPage - 1) * ASSETS_PAGE_SIZE, assetsPage * ASSETS_PAGE_SIZE)
+  const predsPageItems   = openPreds.slice((predsPage - 1) * PREDS_PAGE_SIZE, predsPage * PREDS_PAGE_SIZE)
 
   const selCount    = selectedTickers.size
   const estSecs     = selCount * SECS_PER_PRED
@@ -219,45 +281,80 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
           </div>
 
           {/* Input para ticker personalizado */}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
-            <input
-              value={customInput}
-              onChange={e => setCustomInput(e.target.value.toUpperCase())}
-              onKeyDown={e => { if (e.key === 'Enter') addCustomTicker() }}
-              placeholder="Otro ticker (ej: GOOGL)"
-              disabled={creating}
-              style={{
-                padding: '8px 12px', borderRadius: 7, width: 180,
-                border: '1px solid var(--border)', background: 'var(--bg-muted)',
-                color: 'var(--text)', fontFamily: MONO, fontSize: 13, outline: 'none',
-                opacity: creating ? 0.5 : 1,
-              }}
-            />
-            <button
-              onClick={addCustomTicker}
-              disabled={creating || !customInput.trim()}
-              style={{
-                padding: '8px 14px', borderRadius: 7,
-                border: '1px solid var(--border)', background: 'var(--bg-muted)',
-                color: 'var(--text-muted)', fontFamily: MONO, fontSize: 12, cursor: 'pointer',
-                opacity: creating || !customInput.trim() ? 0.4 : 1,
-              }}
-            >
-              + Agregar
-            </button>
-            {selCount > 0 && (
-              <button
-                onClick={() => setSelectedTickers(new Set())}
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                value={customInput}
+                onChange={e => { setCustomInput(e.target.value.toUpperCase()); setCustomHint({ status: 'idle' }) }}
+                onKeyDown={e => { if (e.key === 'Enter') addCustomTicker() }}
+                placeholder="Otro ticker (ej: GOOGL)"
                 disabled={creating}
                 style={{
+                  padding: '8px 12px', borderRadius: 7, width: 180,
+                  border: `1px solid ${customHint.status === 'suggestions' || customHint.status === 'not_found' ? 'var(--down)' : 'var(--border)'}`,
+                  background: 'var(--bg-muted)',
+                  color: 'var(--text)', fontFamily: MONO, fontSize: 13, outline: 'none',
+                  opacity: creating ? 0.5 : 1,
+                }}
+              />
+              <button
+                onClick={addCustomTicker}
+                disabled={creating || !customInput.trim() || customHint.status === 'checking'}
+                style={{
                   padding: '8px 14px', borderRadius: 7,
-                  border: '1px solid var(--border)', background: 'transparent',
-                  color: 'var(--text-hint)', fontFamily: MONO, fontSize: 11, cursor: 'pointer',
-                  opacity: creating ? 0.4 : 1,
+                  border: '1px solid var(--border)', background: 'var(--bg-muted)',
+                  color: 'var(--text-muted)', fontFamily: MONO, fontSize: 12, cursor: 'pointer',
+                  opacity: creating || !customInput.trim() || customHint.status === 'checking' ? 0.4 : 1,
                 }}
               >
-                Limpiar
+                {customHint.status === 'checking' ? 'Verificando…' : '+ Agregar'}
               </button>
+              {selCount > 0 && (
+                <button
+                  onClick={() => setSelectedTickers(new Set())}
+                  disabled={creating}
+                  style={{
+                    padding: '8px 14px', borderRadius: 7,
+                    border: '1px solid var(--border)', background: 'transparent',
+                    color: 'var(--text-hint)', fontFamily: MONO, fontSize: 11, cursor: 'pointer',
+                    opacity: creating ? 0.4 : 1,
+                  }}
+                >
+                  Limpiar
+                </button>
+              )}
+            </div>
+
+            {/* Sugerencias custom ticker */}
+            {customHint.status === 'suggestions' && customHint.suggestions && (
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>¿Quisiste decir?</span>
+                {customHint.suggestions.map(s => (
+                  <button
+                    key={s.symbol}
+                    onClick={() => applyCustomTicker(s.symbol)}
+                    style={{
+                      padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                      border: '1px solid var(--border)', background: 'var(--bg-muted)',
+                      fontFamily: MONO, fontSize: 11, color: 'var(--text)',
+                    }}
+                  >
+                    <strong>{s.symbol}</strong>
+                    {s.description ? <span style={{ color: 'var(--text-hint)', marginLeft: 5 }}>{s.description}</span> : null}
+                  </button>
+                ))}
+              </div>
+            )}
+            {customHint.status === 'not_found' && (
+              <div style={{ marginTop: 6, fontFamily: MONO, fontSize: 11, color: 'var(--down)' }}>
+                No encontramos "{customInput}" en Finnhub.{' '}
+                <button
+                  onClick={() => { applyCustomTicker(customInput.toUpperCase().trim()) }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', textDecoration: 'underline' }}
+                >
+                  Agregar igual
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -355,34 +452,60 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
           </div>
         )}
 
-        {/* Predicciones activas existentes */}
+        {/* Predicciones activas existentes — colapsable, cerrado por default */}
         {openPreds.length > 0 && (
           <div style={{ marginTop: 22, borderTop: '1px solid var(--border)', paddingTop: 18 }}>
-            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 12 }}>
-              Predicciones activas
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {openPreds.map(p => {
-                const up = p.direction === 'up'
-                return (
-                  <div key={p.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 14,
-                    padding: '10px 14px', borderRadius: 8, background: 'var(--bg-muted)',
-                    flexWrap: 'wrap',
-                  }}>
-                    <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, minWidth: 60 }}>{p.ticker}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>{p.horizon_days}d → {p.target_date}</span>
-                    <span style={{ color: up ? 'var(--up)' : 'var(--down)', fontSize: 13, fontWeight: 600 }}>
-                      {up ? '↑' : '↓'} {p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted.toFixed(2)}%
-                    </span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>acuerdo {p.agreement_pct}%</span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', marginLeft: 'auto' }}>
-                      conf {Math.round(p.confidence * 100)}%
-                    </span>
+            <button
+              onClick={() => { setShowPreds(v => !v); setPredsPage(1) }}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                padding: 0, marginBottom: showPreds ? 12 : 0, textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>
+                  Predicciones activas
+                </span>
+                <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>({openPreds.length})</span>
+              </div>
+              <span style={{
+                fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)',
+                transform: showPreds ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s',
+              }}>▼</span>
+            </button>
+            {showPreds && (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {predsPageItems.map(p => {
+                    const up = p.direction === 'up'
+                    return (
+                      <div key={p.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 14,
+                        padding: '10px 14px', borderRadius: 8, background: 'var(--bg-muted)',
+                        flexWrap: 'wrap',
+                      }}>
+                        <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, minWidth: 60 }}>{p.ticker}</span>
+                        <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>{p.horizon_days}d → {p.target_date}</span>
+                        <span style={{ color: up ? 'var(--up)' : 'var(--down)', fontSize: 13, fontWeight: 600 }}>
+                          {up ? '↑' : '↓'} {p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted.toFixed(2)}%
+                        </span>
+                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>acuerdo {p.agreement_pct}%</span>
+                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', marginLeft: 'auto' }}>
+                          conf {Math.round(p.confidence * 100)}%
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+                {openPreds.length > PREDS_PAGE_SIZE && (
+                  <div style={{ marginTop: 12 }}>
+                    <Pagination page={predsPage} totalItems={openPreds.length} pageSize={PREDS_PAGE_SIZE} onChange={setPredsPage} />
                   </div>
-                )
-              })}
-            </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -447,37 +570,78 @@ export function SettingsSection({ initialAssets, initialOpenPreds }: Props) {
         )}
 
         {/* Agregar ticker nuevo */}
-        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            value={newTicker}
-            onChange={e => setNewTicker(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === 'Enter' && addAsset()}
-            placeholder="Nuevo ticker (ej: GOOGL)"
-            style={{
-              padding: '9px 13px', borderRadius: 8, width: 180,
-              border: '1px solid var(--border)', background: 'var(--bg-muted)',
-              color: 'var(--text)', fontFamily: MONO, fontSize: 13, outline: 'none',
-            }}
-          />
-          <input
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addAsset()}
-            placeholder="Nombre (opcional)"
-            style={{
-              padding: '9px 13px', borderRadius: 8, flex: 1, minWidth: 140,
-              border: '1px solid var(--border)', background: 'var(--bg-muted)',
-              color: 'var(--text)', fontSize: 13, outline: 'none',
-            }}
-          />
-          <button onClick={addAsset} disabled={adding || !newTicker.trim()} style={{
-            padding: '9px 18px', borderRadius: 8, border: 'none',
-            background: 'var(--text)', color: 'var(--bg)',
-            fontFamily: MONO, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            opacity: adding || !newTicker.trim() ? 0.5 : 1,
-          }}>
-            {adding ? 'Agregando…' : '+ Agregar'}
-          </button>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              value={newTicker}
+              onChange={e => { setNewTicker(e.target.value.toUpperCase()); setAssetHint({ status: 'idle' }) }}
+              onKeyDown={e => e.key === 'Enter' && addAsset()}
+              placeholder="Nuevo ticker (ej: GOOGL)"
+              style={{
+                padding: '9px 13px', borderRadius: 8, width: 180,
+                border: `1px solid ${assetHint.status === 'suggestions' || assetHint.status === 'not_found' ? 'var(--down)' : 'var(--border)'}`,
+                background: 'var(--bg-muted)',
+                color: 'var(--text)', fontFamily: MONO, fontSize: 13, outline: 'none',
+              }}
+            />
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addAsset()}
+              placeholder="Nombre (opcional)"
+              style={{
+                padding: '9px 13px', borderRadius: 8, flex: 1, minWidth: 140,
+                border: '1px solid var(--border)', background: 'var(--bg-muted)',
+                color: 'var(--text)', fontSize: 13, outline: 'none',
+              }}
+            />
+            <button onClick={addAsset} disabled={adding || !newTicker.trim() || assetHint.status === 'checking'} style={{
+              padding: '9px 18px', borderRadius: 8, border: 'none',
+              background: 'var(--text)', color: 'var(--bg)',
+              fontFamily: MONO, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              opacity: adding || !newTicker.trim() || assetHint.status === 'checking' ? 0.5 : 1,
+            }}>
+              {assetHint.status === 'checking' ? 'Verificando…' : adding ? 'Agregando…' : '+ Agregar'}
+            </button>
+          </div>
+
+          {/* Sugerencias nuevo activo */}
+          {assetHint.status === 'suggestions' && assetHint.suggestions && (
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>¿Quisiste decir?</span>
+              {assetHint.suggestions.map(s => (
+                <button
+                  key={s.symbol}
+                  onClick={() => applyAssetTicker(s.symbol)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 6, cursor: 'pointer',
+                    border: '1px solid var(--border)', background: 'var(--bg-muted)',
+                    fontFamily: MONO, fontSize: 11, color: 'var(--text)',
+                  }}
+                >
+                  <strong>{s.symbol}</strong>
+                  {s.description ? <span style={{ color: 'var(--text-hint)', marginLeft: 5 }}>{s.description}</span> : null}
+                </button>
+              ))}
+              <button
+                onClick={forceAddAsset}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', textDecoration: 'underline', padding: '5px 4px' }}
+              >
+                Agregar igual
+              </button>
+            </div>
+          )}
+          {assetHint.status === 'not_found' && (
+            <div style={{ marginTop: 8, fontFamily: MONO, fontSize: 11, color: 'var(--down)' }}>
+              No encontramos "{newTicker}" en Finnhub.{' '}
+              <button
+                onClick={forceAddAsset}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', textDecoration: 'underline' }}
+              >
+                Agregar igual
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
