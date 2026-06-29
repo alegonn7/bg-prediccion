@@ -105,7 +105,7 @@ async function getData() {
       `)
       .eq('status', 'open')
       .order('created_at', { ascending: false })
-      .limit(200),
+      .limit(1000),
 
     supabase
       .from('consensus_predictions')
@@ -146,7 +146,7 @@ async function getData() {
       .in('asset_id', assetIds)
       .lte('trade_date', today)
       .order('trade_date', { ascending: false })
-      .limit(assetIds.length * 5)
+      .limit(assetIds.length * 10)
     for (const p of (prices ?? [])) {
       if (!priceMap[p.asset_id]) priceMap[p.asset_id] = Number(p.close)
     }
