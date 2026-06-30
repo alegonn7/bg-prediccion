@@ -1,6 +1,9 @@
 import { createClient } from '@/lib/supabase-server'
 import { DashboardClient } from '@/components/DashboardClient'
 import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
+import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection'
+
+export type { ModelLRParam, BacktestModelStat }
 
 const ALL_MODELS = [
   'tendencia','momentum','volatilidad','volumen','estructura','elliott',
@@ -127,6 +130,8 @@ async function getData() {
     { data: closedModelPreds },
     { data: backtestRuns },
     { data: horizonWeights },
+    { data: modelLRParamsRaw },
+    { data: backtestStatsRaw },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -178,6 +183,16 @@ async function getData() {
       .from('model_weights_horizon')
       .select('model_name, horizon_bucket, weight, direction_accuracy, sample_size, mae_avg')
       .order('model_name'),
+
+    supabase
+      .from('model_learned_params')
+      .select('model_name, horizon_bucket, train_samples, train_accuracy, bias, feature_names, coefficients, last_updated')
+      .order('model_name'),
+
+    supabase
+      .from('backtest_stats')
+      .select('model_name, horizon_bucket, correct_count, total_count, brier_sum, brier_count, mae_sum, mae_count')
+      .limit(10000),
   ])
 
   // Attach current prices to open predictions
@@ -218,6 +233,32 @@ async function getData() {
 
   const modelDetailStats = buildModelStats(closedModelPreds ?? [])
 
+  // Aggregate backtest_stats by model+horizon across all tickers
+  const bsAggMap: Record<string, BacktestModelStat> = {}
+  for (const r of (backtestStatsRaw ?? [])) {
+    const key = `${r.model_name}_${r.horizon_bucket}`
+    if (!bsAggMap[key]) {
+      bsAggMap[key] = {
+        model_name: r.model_name, horizon_bucket: r.horizon_bucket,
+        correct: 0, total: 0, brier_sum: 0, brier_count: 0, mae_sum: 0, mae_count: 0,
+        pct: 0, brier_avg: 0, mae_avg: 0,
+      } as any
+    }
+    const s = bsAggMap[key] as any
+    s.correct    += r.correct_count ?? 0
+    s.total      += r.total_count ?? 0
+    s.brier_sum  += r.brier_sum ?? 0
+    s.brier_count+= r.brier_count ?? 0
+    s.mae_sum    += r.mae_sum ?? 0
+    s.mae_count  += r.mae_count ?? 0
+  }
+  const backtestModelStats: BacktestModelStat[] = Object.values(bsAggMap).map((s: any) => ({
+    ...s,
+    pct:       s.total       > 0 ? s.correct    / s.total       : 0,
+    brier_avg: s.brier_count > 0 ? s.brier_sum  / s.brier_count : 0,
+    mae_avg:   s.mae_count   > 0 ? s.mae_sum    / s.mae_count   : 0,
+  }))
+
   return {
     open: openWithPrices,
     closed: closedAll,
@@ -229,13 +270,20 @@ async function getData() {
     modelDetailStats,
     backtestRuns: (backtestRuns ?? []) as BacktestRun[],
     horizonWeights: (horizonWeights ?? []) as HorizonWeight[],
+    modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
+    backtestModelStats,
   }
 }
 
 export const revalidate = 300
 
 export default async function Dashboard() {
-  const { open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats, backtestRuns, horizonWeights } = await getData()
+  const {
+    open, closed, modelWeights, hits, total, assets,
+    openPredsSummary, modelDetailStats,
+    backtestRuns, horizonWeights,
+    modelLRParams, backtestModelStats,
+  } = await getData()
   return (
     <DashboardClient
       open={open}
@@ -248,6 +296,8 @@ export default async function Dashboard() {
       modelDetailStats={modelDetailStats}
       backtestRuns={backtestRuns}
       horizonWeights={horizonWeights}
+      modelLRParams={modelLRParams}
+      backtestModelStats={backtestModelStats}
     />
   )
 }

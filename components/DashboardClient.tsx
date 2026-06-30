@@ -11,10 +11,12 @@ import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
+import { ModelosSection } from './ModelsSection'
 import type { ModelDetailStat } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
+import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 
-type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento'
+type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento' | 'modelos'
 
 type Props = {
   open: any[]
@@ -27,9 +29,14 @@ type Props = {
   modelDetailStats: ModelDetailStat[]
   backtestRuns: BacktestRun[]
   horizonWeights: HorizonWeight[]
+  modelLRParams: ModelLRParam[]
+  backtestModelStats: BacktestModelStat[]
 }
 
-export function DashboardClient({ open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats, backtestRuns, horizonWeights }: Props) {
+export function DashboardClient({
+  open, closed, modelWeights, hits, total, assets, openPredsSummary,
+  modelDetailStats, backtestRuns, horizonWeights, modelLRParams, backtestModelStats,
+}: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
   function tabStyle(on: boolean): React.CSSProperties {
@@ -52,7 +59,7 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)', WebkitFontSmoothing: 'antialiased' }}>
-      <div style={{ maxWidth: 1080, margin: '0 auto', padding: '40px 24px 96px' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 24px 96px' }}>
 
         <header style={{
           display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
@@ -81,28 +88,42 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
         </header>
 
         <nav style={{ display: 'flex', gap: 2, flexWrap: 'wrap', marginBottom: 40, borderBottom: '1px solid var(--border)' }}>
-          <button onClick={() => setActive('scorecard')} style={tabStyle(active === 'scorecard')}>01 · ¿Funciona?</button>
-          <button onClick={() => setActive('open')} style={tabStyle(active === 'open')}>
+          <button onClick={() => setActive('scorecard')}     style={tabStyle(active === 'scorecard')}>01 · ¿Funciona?</button>
+          <button onClick={() => setActive('open')}          style={tabStyle(active === 'open')}>
             02 · Activas{open.length > 0 ? ` (${open.length})` : ''}
           </button>
-          <button onClick={() => setActive('intraday')} style={tabStyle(active === 'intraday')}>03 · Intradiario</button>
-          <button onClick={() => setActive('news')}      style={tabStyle(active === 'news')}>04 · Noticias</button>
-          <button onClick={() => setActive('argentina')} style={tabStyle(active === 'argentina')}>05 · Argentina</button>
-          <button onClick={() => setActive('analysis')}  style={tabStyle(active === 'analysis')}>06 · Análisis</button>
-          <button onClick={() => setActive('closed')}   style={tabStyle(active === 'closed')}>07 · Historial</button>
-          <button onClick={() => setActive('settings')}  style={tabStyle(active === 'settings')}>08 · Configurar</button>
+          <button onClick={() => setActive('intraday')}      style={tabStyle(active === 'intraday')}>03 · Intradiario</button>
+          <button onClick={() => setActive('news')}          style={tabStyle(active === 'news')}>04 · Noticias</button>
+          <button onClick={() => setActive('argentina')}     style={tabStyle(active === 'argentina')}>05 · Argentina</button>
+          <button onClick={() => setActive('analysis')}      style={tabStyle(active === 'analysis')}>06 · Análisis</button>
+          <button onClick={() => setActive('closed')}        style={tabStyle(active === 'closed')}>07 · Historial</button>
+          <button onClick={() => setActive('settings')}      style={tabStyle(active === 'settings')}>08 · Configurar</button>
           <button onClick={() => setActive('entrenamiento')} style={tabStyle(active === 'entrenamiento')}>09 · Entrenamiento</button>
+          <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
         </nav>
 
-        {active === 'scorecard' && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} />}
-        {active === 'open'      && <OpenPredictionsSection predictions={open} />}
-        {active === 'intraday'  && <IntradaySectionClient />}
-        {active === 'closed'    && <ClosedPredictionsSection results={closed} />}
-        {active === 'settings'  && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
-        {active === 'analysis'  && <ModelAnalysisSection stats={modelDetailStats} />}
+        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} />}
+        {active === 'open'          && <OpenPredictionsSection predictions={open} />}
+        {active === 'intraday'      && <IntradaySectionClient />}
+        {active === 'closed'        && <ClosedPredictionsSection results={closed} />}
+        {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
+        {active === 'analysis'      && <ModelAnalysisSection stats={modelDetailStats} />}
         {active === 'news'          && <NewsSectionClient />}
         {active === 'argentina'     && <ArgentinaSectionClient />}
-        {active === 'entrenamiento' && <EntrenamientoSection runs={backtestRuns} horizonWeights={horizonWeights} globalWeights={modelWeights} />}
+        {active === 'entrenamiento' && (
+          <EntrenamientoSection
+            runs={backtestRuns}
+            horizonWeights={horizonWeights}
+            globalWeights={modelWeights}
+            backtestModelStats={backtestModelStats}
+          />
+        )}
+        {active === 'modelos' && (
+          <ModelosSection
+            modelLRParams={modelLRParams}
+            backtestModelStats={backtestModelStats}
+          />
+        )}
 
       </div>
     </div>
