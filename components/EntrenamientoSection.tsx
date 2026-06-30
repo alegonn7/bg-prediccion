@@ -53,6 +53,7 @@ function bigNum(v: number | string, color?: string) {
 export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Props) {
   const [triggering, setTriggering] = useState(false)
   const [triggerResult, setTriggerResult] = useState<string | null>(null)
+  const [trainingAll, setTrainingAll] = useState(false)
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -76,19 +77,26 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
   const modelNames = [...new Set([...horizonWeights.map(h => h.model_name), ...globalWeights.map(g => g.model_name)])]
     .sort()
 
-  async function handleTrigger() {
-    setTriggering(true)
+  async function handleTrigger(all = false) {
+    if (all) setTrainingAll(true); else setTriggering(true)
     setTriggerResult(null)
     try {
-      const res = await fetch('/api/backtest/trigger', { method: 'POST' })
+      const url = all ? '/api/backtest/trigger?all=true' : '/api/backtest/trigger'
+      const res = await fetch(url, { method: 'POST' })
       const json = await res.json()
-      setTriggerResult(json.triggered > 0
-        ? `Disparado para ${json.triggered} activos: ${(json.tickers as string[]).join(', ')}`
-        : 'Nada pendiente por procesar.')
+      if (json.triggered > 0) {
+        setTriggerResult(all
+          ? `Entrenando ${json.triggered} activos en ${json.waves} oleadas de 25 — tarda ~${Math.ceil(json.waves * 12)} segundos. Recargá la página en 2 minutos.`
+          : `Disparado: ${(json.tickers as string[]).join(', ')}`
+        )
+      } else {
+        setTriggerResult('Nada pendiente — todos los activos ya están entrenados.')
+      }
     } catch {
-      setTriggerResult('Error al disparar el batch.')
+      setTriggerResult('Error al disparar.')
     } finally {
       setTriggering(false)
+      setTrainingAll(false)
     }
   }
 
@@ -124,25 +132,43 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
         </div>
       )}
 
-      {/* Trigger button */}
+      {/* Trigger buttons */}
       {card(
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <button
-            onClick={handleTrigger}
-            disabled={triggering}
-            style={{
-              background: triggering ? 'var(--border)' : '#2563eb',
-              color: '#fff', border: 'none', borderRadius: 7,
-              padding: '9px 20px', fontSize: 13, fontWeight: 600,
-              cursor: triggering ? 'default' : 'pointer',
-              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
-            }}
-          >
-            {triggering ? 'Disparando...' : 'Disparar siguiente lote (10 activos)'}
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              onClick={() => handleTrigger(true)}
+              disabled={trainingAll || triggering}
+              style={{
+                background: trainingAll ? 'var(--border)' : '#16a34a',
+                color: '#fff', border: 'none', borderRadius: 7,
+                padding: '10px 22px', fontSize: 13, fontWeight: 700,
+                cursor: (trainingAll || triggering) ? 'default' : 'pointer',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              }}
+            >
+              {trainingAll ? 'Entrenando todo...' : `Entrenar todo ahora (${Math.max(0, 100 - done)} pendientes)`}
+            </button>
+            <button
+              onClick={() => handleTrigger(false)}
+              disabled={triggering || trainingAll}
+              style={{
+                background: (triggering || trainingAll) ? 'var(--border)' : 'var(--card)',
+                color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 7,
+                padding: '9px 18px', fontSize: 12, fontWeight: 500,
+                cursor: (triggering || trainingAll) ? 'default' : 'pointer',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              }}
+            >
+              {triggering ? 'Disparando...' : 'Lote de 10'}
+            </button>
+          </div>
           {triggerResult && (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{triggerResult}</span>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{triggerResult}</div>
           )}
+          <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
+            El cron automático procesa 10 activos/día a las 02:00 UTC · "Entrenar todo" dispara en oleadas de 25 con 3s de espera entre oleadas
+          </div>
         </div>
       )}
 
