@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase-server'
 import { DashboardClient } from '@/components/DashboardClient'
+import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
 
 const ALL_MODELS = [
   'tendencia','momentum','volatilidad','volumen','estructura','elliott',
@@ -124,6 +125,8 @@ async function getData() {
     { data: modelWeights },
     { data: allAssets },
     { data: closedModelPreds },
+    { data: backtestRuns },
+    { data: horizonWeights },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -165,6 +168,16 @@ async function getData() {
       .not('direction_correct', 'is', null)
       .order('created_at', { ascending: false })
       .limit(5000),
+
+    supabase
+      .from('backtest_runs')
+      .select('ticker, status, dates_processed, predictions_evaluated, error_msg, started_at, completed_at')
+      .order('ticker'),
+
+    supabase
+      .from('model_weights_horizon')
+      .select('model_name, horizon_bucket, weight, direction_accuracy, sample_size, mae_avg')
+      .order('model_name'),
   ])
 
   // Attach current prices to open predictions
@@ -214,13 +227,15 @@ async function getData() {
     assets: allAssets ?? [],
     openPredsSummary,
     modelDetailStats,
+    backtestRuns: (backtestRuns ?? []) as BacktestRun[],
+    horizonWeights: (horizonWeights ?? []) as HorizonWeight[],
   }
 }
 
 export const revalidate = 300
 
 export default async function Dashboard() {
-  const { open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats } = await getData()
+  const { open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats, backtestRuns, horizonWeights } = await getData()
   return (
     <DashboardClient
       open={open}
@@ -231,6 +246,8 @@ export default async function Dashboard() {
       assets={assets}
       openPredsSummary={openPredsSummary}
       modelDetailStats={modelDetailStats}
+      backtestRuns={backtestRuns}
+      horizonWeights={horizonWeights}
     />
   )
 }

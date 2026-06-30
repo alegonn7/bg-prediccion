@@ -10,9 +10,11 @@ import { ModelAnalysisSection } from './ModelAnalysis'
 import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
+import { EntrenamientoSection } from './EntrenamientoSection'
 import type { ModelDetailStat } from '@/app/page'
+import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 
-type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday'
+type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento'
 
 type Props = {
   open: any[]
@@ -23,9 +25,11 @@ type Props = {
   assets: any[]
   openPredsSummary: any[]
   modelDetailStats: ModelDetailStat[]
+  backtestRuns: BacktestRun[]
+  horizonWeights: HorizonWeight[]
 }
 
-export function DashboardClient({ open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats }: Props) {
+export function DashboardClient({ open, closed, modelWeights, hits, total, assets, openPredsSummary, modelDetailStats, backtestRuns, horizonWeights }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
   function tabStyle(on: boolean): React.CSSProperties {
@@ -87,6 +91,7 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
           <button onClick={() => setActive('analysis')}  style={tabStyle(active === 'analysis')}>06 · Análisis</button>
           <button onClick={() => setActive('closed')}   style={tabStyle(active === 'closed')}>07 · Historial</button>
           <button onClick={() => setActive('settings')}  style={tabStyle(active === 'settings')}>08 · Configurar</button>
+          <button onClick={() => setActive('entrenamiento')} style={tabStyle(active === 'entrenamiento')}>09 · Entrenamiento</button>
         </nav>
 
         {active === 'scorecard' && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} />}
@@ -95,8 +100,9 @@ export function DashboardClient({ open, closed, modelWeights, hits, total, asset
         {active === 'closed'    && <ClosedPredictionsSection results={closed} />}
         {active === 'settings'  && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
         {active === 'analysis'  && <ModelAnalysisSection stats={modelDetailStats} />}
-        {active === 'news'      && <NewsSectionClient />}
-        {active === 'argentina' && <ArgentinaSectionClient />}
+        {active === 'news'          && <NewsSectionClient />}
+        {active === 'argentina'     && <ArgentinaSectionClient />}
+        {active === 'entrenamiento' && <EntrenamientoSection runs={backtestRuns} horizonWeights={horizonWeights} globalWeights={modelWeights} />}
 
       </div>
     </div>
