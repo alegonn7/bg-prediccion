@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import type { BacktestModelStat } from './ModelsSection'
+import type { ChangelogEntry } from '@/app/page'
 
 export type BacktestRun = {
   ticker: string
@@ -26,6 +27,7 @@ type Props = {
   horizonWeights: HorizonWeight[]
   globalWeights: { model_name: string; weight: number; direction_accuracy: number | null; sample_size: number }[]
   backtestModelStats: BacktestModelStat[]
+  changelog: ChangelogEntry[]
 }
 
 const BUCKETS = [7, 14, 30, 60, 90]
@@ -84,12 +86,186 @@ function WeightCell({ w, n, acc }: { w: number; n?: number; acc?: number | null 
   )
 }
 
-export function EntrenamientoSection({ runs, horizonWeights, globalWeights, backtestModelStats }: Props) {
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 2) return 'hace un momento'
+  if (mins < 60) return `hace ${mins} min`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `hace ${hrs}h`
+  const days = Math.floor(hrs / 24)
+  if (days === 1) return 'ayer'
+  if (days < 7) return `hace ${days} días`
+  return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+const TRIGGER_LABEL: Record<string, string> = {
+  initial: 'Estado inicial',
+  cron:    'Cron automático (02:00 UTC)',
+  manual:  'Reentrenamiento manual',
+}
+const TRIGGER_COLOR: Record<string, string> = {
+  initial: '#6b7280',
+  cron:    '#3b82f6',
+  manual:  '#8b5cf6',
+}
+
+function ChangelogCard({ entry }: { entry: ChangelogEntry }) {
+  const isLR     = entry.change_type === 'lr_params'
+  const isInit   = entry.trigger === 'initial'
+  const accDelta = (entry.new_accuracy ?? 0) - (entry.old_accuracy ?? 0)
+  const wDelta   = (entry.new_weight ?? 0) - (entry.old_weight ?? 0)
+  const samplesDelta = (entry.new_samples ?? 0) - (entry.old_samples ?? 0)
+  const hasImpact = Math.abs(accDelta) > 0.001 || Math.abs(wDelta) > 0.01
+
+  return (
+    <div style={{
+      border: `1px solid ${isInit ? 'var(--border)' : (isLR ? '#3b82f630' : '#f59e0b30')}`,
+      borderLeft: `3px solid ${isInit ? 'var(--border)' : (isLR ? '#3b82f6' : '#f59e0b')}`,
+      borderRadius: 8,
+      padding: '14px 16px',
+      background: isInit ? 'var(--bg)' : 'var(--card)',
+      opacity: isInit ? 0.75 : 1,
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+            background: isLR ? '#3b82f622' : '#f59e0b22',
+            color: isLR ? '#3b82f6' : '#f59e0b',
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+          }}>
+            {isLR ? 'Params LR' : 'Peso Brier'}
+          </span>
+          <span style={{ fontWeight: 700, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 13 }}>
+            {entry.model_name}
+          </span>
+          {entry.horizon_bucket && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg)', padding: '1px 7px', borderRadius: 5, border: '1px solid var(--border)' }}>
+              {entry.horizon_bucket}d
+            </span>
+          )}
+          <span style={{
+            fontSize: 10, padding: '1px 7px', borderRadius: 5,
+            color: TRIGGER_COLOR[entry.trigger] ?? 'var(--text-hint)',
+            background: (TRIGGER_COLOR[entry.trigger] ?? '#6b7280') + '18',
+          }}>
+            {TRIGGER_LABEL[entry.trigger] ?? entry.trigger}
+          </span>
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text-hint)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {relativeTime(entry.snapshot_at)}
+        </span>
+      </div>
+
+      {/* Métricas clave */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 10 }}>
+        {/* Muestras */}
+        {entry.new_samples != null && (
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-hint)', marginRight: 4 }}>Muestras:</span>
+            {isInit || entry.old_samples === 0 ? (
+              <span style={{ fontWeight: 600, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>{entry.new_samples.toLocaleString()}</span>
+            ) : (
+              <>
+                <span style={{ color: 'var(--text-muted)' }}>{(entry.old_samples ?? 0).toLocaleString()}</span>
+                <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>
+                <span style={{ fontWeight: 600 }}>{entry.new_samples.toLocaleString()}</span>
+                {samplesDelta !== 0 && (
+                  <span style={{ fontSize: 11, color: samplesDelta > 0 ? '#22c55e' : '#f87171', marginLeft: 4 }}>
+                    {samplesDelta > 0 ? '+' : ''}{samplesDelta.toLocaleString()}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Precisión LR o Peso */}
+        {isLR && entry.new_accuracy != null && (
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-hint)', marginRight: 4 }}>Precisión LR:</span>
+            {isInit || entry.old_accuracy === 0 ? (
+              <span style={{ fontWeight: 600, color: accColor(entry.new_accuracy) }}>{(entry.new_accuracy * 100).toFixed(1)}%</span>
+            ) : (
+              <>
+                <span style={{ color: 'var(--text-muted)' }}>{((entry.old_accuracy ?? 0) * 100).toFixed(1)}%</span>
+                <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>
+                <span style={{ fontWeight: 600, color: accColor(entry.new_accuracy) }}>{(entry.new_accuracy * 100).toFixed(1)}%</span>
+                {hasImpact && Math.abs(accDelta) > 0.001 && (
+                  <span style={{ fontSize: 11, color: accDelta > 0 ? '#22c55e' : '#f87171', marginLeft: 4, fontWeight: 700 }}>
+                    {accDelta > 0 ? '▲' : '▼'}{(Math.abs(accDelta) * 100).toFixed(1)} pp
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {!isLR && entry.new_weight != null && (
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-hint)', marginRight: 4 }}>Peso Brier:</span>
+            <span style={{ color: 'var(--text-muted)' }}>{(entry.old_weight ?? 0).toFixed(3)}</span>
+            <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>
+            <span style={{ fontWeight: 600, color: entry.new_weight > 1.1 ? '#22c55e' : entry.new_weight < 0.9 ? '#f87171' : 'var(--text)' }}>
+              {entry.new_weight.toFixed(3)}
+            </span>
+            {Math.abs(wDelta) > 0.001 && (
+              <span style={{ fontSize: 11, color: wDelta > 0 ? '#22c55e' : '#f87171', marginLeft: 4, fontWeight: 700 }}>
+                {wDelta > 0 ? '▲' : '▼'}{Math.abs(wDelta).toFixed(3)}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Precisión direccional (weight entries) */}
+        {!isLR && entry.new_dir_accuracy != null && (
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-hint)', marginRight: 4 }}>Acc. backtest:</span>
+            <span style={{ color: 'var(--text-muted)' }}>{((entry.old_dir_accuracy ?? 0) * 100).toFixed(1)}%</span>
+            <span style={{ color: 'var(--text-hint)', margin: '0 4px' }}>→</span>
+            <span style={{ fontWeight: 600 }}>{(entry.new_dir_accuracy * 100).toFixed(1)}%</span>
+          </div>
+        )}
+
+        {/* Feature más cambiada */}
+        {isLR && entry.max_coeff_delta != null && entry.max_coeff_delta > 0.005 && entry.top_changed_feature && !isInit && (
+          <div style={{ fontSize: 12 }}>
+            <span style={{ color: 'var(--text-hint)', marginRight: 4 }}>Mayor Δ coeff:</span>
+            <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: 'var(--text-muted)' }}>
+              {entry.top_changed_feature}
+            </span>
+            <span style={{ color: 'var(--text-hint)', marginLeft: 4 }}>
+              (Δ{entry.max_coeff_delta.toFixed(3)})
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Justificación / Resumen */}
+      {entry.summary && (
+        <div style={{
+          fontSize: 11, color: isInit ? 'var(--text-hint)' : 'var(--text-muted)',
+          background: 'var(--bg)', borderRadius: 6, padding: '8px 10px',
+          lineHeight: 1.6, borderLeft: '2px solid var(--border)',
+        }}>
+          <span style={{ color: 'var(--text-hint)', fontWeight: 600, marginRight: 6 }}>Razón:</span>
+          {entry.summary}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function EntrenamientoSection({ runs, horizonWeights, globalWeights, backtestModelStats, changelog }: Props) {
   const [triggering, setTriggering] = useState(false)
   const [trainingAll, setTrainingAll] = useState(false)
   const [retraining, setRetraining] = useState(false)
+  const [federating, setFederating] = useState(false)
   const [triggerResult, setTriggerResult] = useState<string | null>(null)
-  const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'pesos' | 'activos'>('resumen')
+  const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'pesos' | 'activos' | 'historial'>('resumen')
+  const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -120,6 +296,31 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     ...globalWeights.map(g => g.model_name),
     ...backtestModelStats.map(s => s.model_name),
   ])].sort()
+
+  async function handleFederate() {
+    setFederating(true)
+    setTriggerResult(null)
+    try {
+      const res = await fetch('/api/backtest/federate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trigger: 'manual' }),
+      })
+      const json = await res.json()
+      if (json.ok) {
+        setTriggerResult(
+          `Federación completada · ${json.model_lr_upserted ?? 0} modelos LR actualizados · ${json.weights_upserted ?? 0} pesos recalculados · ${json.changelog_entries ?? 0} cambios registrados en el historial`
+        )
+        setActiveSection('historial')
+      } else {
+        setTriggerResult('Error al federar: ' + (json.error ?? 'desconocido'))
+      }
+    } catch {
+      setTriggerResult('Error de conexión al federar.')
+    } finally {
+      setFederating(false)
+    }
+  }
 
   async function handleTrigger(all = false, force = false) {
     if (force) setRetraining(true)
@@ -222,8 +423,27 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               {triggering ? 'Disparando...' : 'Lote de 10'}
             </button>
           </div>
+          <div style={{ width: '100%', height: 1, background: 'var(--border)', margin: '4px 0' }} />
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={handleFederate}
+              disabled={federating || triggering || trainingAll || retraining}
+              style={{
+                background: federating ? 'var(--border)' : '#0ea5e9',
+                color: '#fff', border: 'none', borderRadius: 7,
+                padding: '9px 20px', fontSize: 12, fontWeight: 700,
+                cursor: (federating || triggering || trainingAll || retraining) ? 'default' : 'pointer',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              }}
+            >
+              {federating ? 'Federando...' : 'Federar modelos y calcular cambios'}
+            </button>
+            <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>
+              Promedia parámetros LR de todos los activos, recalcula pesos Brier y registra cambios en el historial
+            </span>
+          </div>
           {triggerResult && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{triggerResult}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, background: 'var(--bg)', borderRadius: 6, padding: '8px 12px' }}>{triggerResult}</div>
           )}
           <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
             Cron automático: 10 activos/día a las 02:00 UTC · "Reentrenar todo" incluye datos reales acumulados (predicciones cerradas verificadas)
@@ -263,6 +483,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
         {sectionBtn('rendimiento', 'Rendimiento Backtest')}
         {sectionBtn('pesos', 'Pesos Federados')}
         {sectionBtn('activos', 'Estado por Activo')}
+        {sectionBtn('historial', `Historial de Cambios (${changelog.filter(c => c.trigger !== 'initial').length})`)}
       </div>
 
       {/* ── ARQUITECTURA ───────────────────────────────────── */}
@@ -512,6 +733,99 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               </div>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* ── HISTORIAL DE CAMBIOS ────────────────────────────── */}
+      {activeSection === 'historial' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Card style={{ padding: '14px 20px' }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Cada vez que se corre <b>"Federar modelos"</b> (o el cron nocturno), el sistema compara los parámetros nuevos
+                con los anteriores y registra aquí <b>qué cambió, cuánto y por qué</b>.
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {([
+                  { id: 'changes', label: 'Solo cambios' },
+                  { id: 'lr_params', label: 'LR Params' },
+                  { id: 'weight', label: 'Pesos' },
+                  { id: 'all', label: 'Todo (incl. baseline)' },
+                ] as const).map(({ id, label }) => (
+                  <button
+                    key={id}
+                    onClick={() => setChangelogFilter(id)}
+                    style={{
+                      padding: '5px 12px', fontSize: 11, fontWeight: changelogFilter === id ? 700 : 400,
+                      background: changelogFilter === id ? 'var(--text)' : 'var(--card)',
+                      color: changelogFilter === id ? 'var(--bg)' : 'var(--text-muted)',
+                      border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Card>
+
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-hint)' }}>
+            {(Object.entries(TRIGGER_LABEL) as [string, string][]).map(([k, v]) => (
+              <span key={k} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: TRIGGER_COLOR[k] ?? '#6b7280', display: 'inline-block' }} />
+                <b style={{ color: TRIGGER_COLOR[k] ?? 'var(--text-hint)' }}>{k}</b> — {v}
+              </span>
+            ))}
+            <span>· Borde azul = params LR · Borde ámbar = peso Brier</span>
+          </div>
+
+          {(() => {
+            const filtered = changelog.filter(c => {
+              if (changelogFilter === 'changes') return c.trigger !== 'initial'
+              if (changelogFilter === 'lr_params') return c.change_type === 'lr_params'
+              if (changelogFilter === 'weight') return c.change_type === 'weight'
+              return true
+            })
+            if (filtered.length === 0) {
+              return (
+                <Card>
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-hint)', fontSize: 13 }}>
+                    {changelogFilter === 'changes'
+                      ? 'Sin cambios registrados aún. Hacé clic en "Federar modelos y calcular cambios" después de un reentrenamiento.'
+                      : 'Sin entradas para este filtro.'}
+                  </div>
+                </Card>
+              )
+            }
+            let lastDate = ''
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {filtered.map(entry => {
+                  const d = new Date(entry.snapshot_at).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+                  const showDate = d !== lastDate
+                  lastDate = d
+                  return (
+                    <div key={entry.id}>
+                      {showDate && (
+                        <div style={{
+                          fontSize: 11, color: 'var(--text-hint)', fontWeight: 600,
+                          letterSpacing: '0.08em', textTransform: 'uppercase',
+                          padding: '6px 0 4px', marginTop: 8,
+                          borderBottom: '1px solid var(--border)', marginBottom: 6,
+                        }}>
+                          {d}
+                        </div>
+                      )}
+                      <ChangelogCard entry={entry} />
+                    </div>
+                  )
+                })}
+                <div style={{ fontSize: 11, color: 'var(--text-hint)', textAlign: 'center', paddingTop: 8 }}>
+                  {filtered.length} entradas · Las entradas se conservan indefinidamente
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>

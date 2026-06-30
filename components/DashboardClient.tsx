@@ -12,7 +12,7 @@ import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ModelDetailStat } from '@/app/page'
+import type { ModelDetailStat, ChangelogEntry } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 
@@ -31,11 +31,12 @@ type Props = {
   horizonWeights: HorizonWeight[]
   modelLRParams: ModelLRParam[]
   backtestModelStats: BacktestModelStat[]
+  changelog: ChangelogEntry[]
 }
 
 export function DashboardClient({
   open, closed, modelWeights, hits, total, assets, openPredsSummary,
-  modelDetailStats, backtestRuns, horizonWeights, modelLRParams, backtestModelStats,
+  modelDetailStats, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -116,6 +117,7 @@ export function DashboardClient({
             horizonWeights={horizonWeights}
             globalWeights={modelWeights}
             backtestModelStats={backtestModelStats}
+            changelog={changelog}
           />
         )}
         {active === 'modelos' && (

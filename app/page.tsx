@@ -5,6 +5,27 @@ import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection
 
 export type { ModelLRParam, BacktestModelStat }
 
+export type ChangelogEntry = {
+  id: number
+  snapshot_at: string
+  model_name: string
+  horizon_bucket: number | null
+  change_type: 'lr_params' | 'weight'
+  trigger: string
+  old_samples: number | null
+  new_samples: number | null
+  old_accuracy: number | null
+  new_accuracy: number | null
+  old_weight: number | null
+  new_weight: number | null
+  old_dir_accuracy: number | null
+  new_dir_accuracy: number | null
+  max_coeff_delta: number | null
+  top_changed_feature: string | null
+  feature_names: string[] | null
+  summary: string | null
+}
+
 const ALL_MODELS = [
   'tendencia','momentum','volatilidad','volumen','estructura','elliott',
   'velas','macro','fundamental','sentimiento',
@@ -132,6 +153,7 @@ async function getData() {
     { data: horizonWeights },
     { data: modelLRParamsRaw },
     { data: backtestStatsRaw },
+    { data: changelogRaw },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -193,6 +215,12 @@ async function getData() {
       .from('backtest_stats')
       .select('model_name, horizon_bucket, correct_count, total_count, brier_sum, brier_count, mae_sum, mae_count')
       .limit(10000),
+
+    supabase
+      .from('model_changelog')
+      .select('id, snapshot_at, model_name, horizon_bucket, change_type, trigger, old_samples, new_samples, old_accuracy, new_accuracy, old_weight, new_weight, old_dir_accuracy, new_dir_accuracy, max_coeff_delta, top_changed_feature, feature_names, summary')
+      .order('snapshot_at', { ascending: false })
+      .limit(200),
   ])
 
   // Attach current prices to open predictions
@@ -272,6 +300,7 @@ async function getData() {
     horizonWeights: (horizonWeights ?? []) as HorizonWeight[],
     modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
     backtestModelStats,
+    changelog: (changelogRaw ?? []) as ChangelogEntry[],
   }
 }
 
@@ -282,7 +311,7 @@ export default async function Dashboard() {
     open, closed, modelWeights, hits, total, assets,
     openPredsSummary, modelDetailStats,
     backtestRuns, horizonWeights,
-    modelLRParams, backtestModelStats,
+    modelLRParams, backtestModelStats, changelog,
   } = await getData()
   return (
     <DashboardClient
@@ -298,6 +327,7 @@ export default async function Dashboard() {
       horizonWeights={horizonWeights}
       modelLRParams={modelLRParams}
       backtestModelStats={backtestModelStats}
+      changelog={changelog}
     />
   )
 }
