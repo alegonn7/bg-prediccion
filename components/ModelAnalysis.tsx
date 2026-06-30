@@ -250,7 +250,7 @@ function ModelRow({ stat, rank, expanded, onToggle }: {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {stat.by_ticker.slice(0, 8).map(t => (
                     <div key={t.ticker} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, minWidth: 55 }}>{t.ticker}</span>
+                      <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, minWidth: 48 }}>{t.ticker}</span>
                       <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
                         <div style={{
                           height: '100%', borderRadius: 999,
@@ -258,30 +258,107 @@ function ModelRow({ stat, rank, expanded, onToggle }: {
                           background: accColor(t.accuracy),
                         }} />
                       </div>
-                      <span style={{ fontFamily: MONO, fontSize: 11, color: accColor(t.accuracy), minWidth: 36, textAlign: 'right' }}>
+                      <span style={{ fontFamily: MONO, fontSize: 11, color: accColor(t.accuracy), minWidth: 34, textAlign: 'right' }}>
                         {Math.round(t.accuracy * 100)}%
+                      </span>
+                      <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', minWidth: 42, textAlign: 'right' }}>
+                        {t.mae_avg !== null ? (t.mae_avg * 100).toFixed(2) + '%' : '—'}
                       </span>
                       <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 28 }}>
                         n={t.total}
                       </span>
                     </div>
                   ))}
+                  <div style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-hint)', marginTop: 2 }}>
+                    acc% · MAE · n
+                  </div>
                 </div>
               )}
 
               {stat.rmse_avg !== null && (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 12 }}>
                   <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginBottom: 4 }}>Error de magnitud (RMSE)</div>
                   <div style={{ fontFamily: MONO, fontSize: 14, color: 'var(--text-muted)' }}>
                     {(stat.rmse_avg * 100).toFixed(2)}%
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>
-                    Cuando se equivoca, el error típico es ±{(stat.rmse_avg * 100).toFixed(2)}pp
                   </div>
                 </div>
               )}
             </div>
           </div>
+
+          {/* MAE por horizonte + MAE correcto vs incorrecto */}
+          {(stat.mae_by_horizon.length > 0 || stat.mae_when_correct !== null || stat.mae_when_wrong !== null) && (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+
+              {/* MAE por horizonte */}
+              {stat.mae_by_horizon.length > 0 && (
+                <div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
+                    MAE por horizonte
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {stat.mae_by_horizon.map(h => (
+                      <div key={h.horizon} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 50 }}>
+                          ≤{h.horizon}d
+                        </span>
+                        <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
+                          <div style={{
+                            height: '100%', borderRadius: 999,
+                            width: `${Math.min(h.mae * 1000, 100)}%`,
+                            background: '#6366f1',
+                          }} />
+                        </div>
+                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)', minWidth: 44, textAlign: 'right' }}>
+                          {(h.mae * 100).toFixed(2)}%
+                        </span>
+                        <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 28 }}>
+                          n={h.n}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 6 }}>
+                    Error promedio agrupado por horizonte de predicción.
+                  </div>
+                </div>
+              )}
+
+              {/* MAE cuando acertó vs cuando falló */}
+              {(stat.mae_when_correct !== null || stat.mae_when_wrong !== null) && (
+                <div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
+                    MAE: dirección acertada vs fallada
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 8, padding: '10px 12px' }}>
+                      <div style={{ fontSize: 11, color: 'var(--up)', marginBottom: 4 }}>Cuando acertó dirección</div>
+                      <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+                        {stat.mae_when_correct !== null ? (stat.mae_when_correct * 100).toFixed(2) + '%' : '—'}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginTop: 2 }}>error en magnitud</div>
+                    </div>
+                    <div style={{ background: 'var(--bg-card)', borderRadius: 8, padding: '10px 12px' }}>
+                      <div style={{ fontSize: 11, color: 'var(--down)', marginBottom: 4 }}>Cuando falló dirección</div>
+                      <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+                        {stat.mae_when_wrong !== null ? (stat.mae_when_wrong * 100).toFixed(2) + '%' : '—'}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginTop: 2 }}>error en magnitud</div>
+                    </div>
+                  </div>
+                  {stat.mae_when_correct !== null && stat.mae_when_wrong !== null && (() => {
+                    const diff = stat.mae_when_correct - stat.mae_when_wrong
+                    const msg = Math.abs(diff) < 0.001
+                      ? 'El error en magnitud es similar sin importar la dirección.'
+                      : diff < 0
+                        ? `Cuando acierta dirección también predice mejor la magnitud (${(Math.abs(diff) * 100).toFixed(2)}pp menos error).`
+                        : `Curioso: más error cuando acierta dirección (+${(diff * 100).toFixed(2)}pp).`
+                    return <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 8, lineHeight: 1.5 }}>{msg}</div>
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Historial reciente */}
           {stat.recent.length > 0 && (

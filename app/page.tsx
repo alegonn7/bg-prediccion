@@ -17,11 +17,14 @@ export type ModelDetailStat = {
   called_down: number; correct_down: number
   mae_avg: number | null
   rmse_avg: number | null
+  mae_when_correct: number | null
+  mae_when_wrong: number | null
   avg_confidence: number
   conf_low:  { total: number; correct: number }
   conf_mid:  { total: number; correct: number }
   conf_high: { total: number; correct: number }
-  by_ticker: { ticker: string; total: number; correct: number; accuracy: number }[]
+  by_ticker: { ticker: string; total: number; correct: number; accuracy: number; mae_avg: number | null }[]
+  mae_by_horizon: { horizon: number; mae: number; n: number }[]
   recent: { correct: boolean; confidence: number; ticker: string }[]
 }
 
@@ -49,13 +52,28 @@ function buildModelStats(preds: any[]): ModelDetailStat[] {
     const midConf  = ps.filter((p: any) => Number(p.confidence) >= LOW && Number(p.confidence) < HIGH)
     const highConf = ps.filter((p: any) => Number(p.confidence) >= HIGH)
 
-    const byTicker: Record<string, { total: number; correct: number }> = {}
+    const byTicker: Record<string, { total: number; correct: number; maes: number[] }> = {}
     for (const p of ps) {
       const t = (p.assets as any)?.ticker ?? '?'
-      if (!byTicker[t]) byTicker[t] = { total: 0, correct: 0 }
+      if (!byTicker[t]) byTicker[t] = { total: 0, correct: 0, maes: [] }
       byTicker[t].total++
       if (p.direction_correct) byTicker[t].correct++
+      if (p.mae != null) byTicker[t].maes.push(Number(p.mae))
     }
+
+    const HORIZON_BUCKETS = [1, 2, 7, 14, 30, 60, 90]
+    const byHorizon: Record<number, number[]> = {}
+    for (const h of HORIZON_BUCKETS) byHorizon[h] = []
+    for (const p of ps) {
+      if (p.mae == null) continue
+      const h = Number(p.horizon_days)
+      const bucket = HORIZON_BUCKETS.find(b => h <= b) ?? 90
+      byHorizon[bucket].push(Number(p.mae))
+    }
+
+    const correctPreds = ps.filter((p: any) => p.direction_correct && p.mae != null)
+    const wrongPreds   = ps.filter((p: any) => !p.direction_correct && p.mae != null)
+    const avgMae = (arr: any[]) => arr.length ? arr.reduce((s, p) => s + Number(p.mae), 0) / arr.length : null
 
     return {
       model_name:    mn,
@@ -67,13 +85,26 @@ function buildModelStats(preds: any[]): ModelDetailStat[] {
       correct_down:  down.filter((p: any) => p.direction_correct).length,
       mae_avg:       maes.length ? maes.reduce((a, b) => a + b, 0) / maes.length : null,
       rmse_avg:      sqs.length  ? Math.sqrt(sqs.reduce((a, b) => a + b, 0) / sqs.length) : null,
+      mae_when_correct: avgMae(correctPreds),
+      mae_when_wrong:   avgMae(wrongPreds),
       avg_confidence:confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : 0,
       conf_low:  { total: lowConf.length,  correct: lowConf.filter((p: any)  => p.direction_correct).length },
       conf_mid:  { total: midConf.length,  correct: midConf.filter((p: any)  => p.direction_correct).length },
       conf_high: { total: highConf.length, correct: highConf.filter((p: any) => p.direction_correct).length },
       by_ticker: Object.entries(byTicker)
-        .map(([ticker, v]) => ({ ticker, ...v, accuracy: v.total > 0 ? v.correct / v.total : 0 }))
+        .map(([ticker, v]) => ({
+          ticker, total: v.total, correct: v.correct,
+          accuracy: v.total > 0 ? v.correct / v.total : 0,
+          mae_avg: v.maes.length ? v.maes.reduce((a, b) => a + b, 0) / v.maes.length : null,
+        }))
         .sort((a, b) => b.total - a.total),
+      mae_by_horizon: HORIZON_BUCKETS
+        .filter(h => byHorizon[h].length > 0)
+        .map(h => ({
+          horizon: h,
+          mae: byHorizon[h].reduce((a, b) => a + b, 0) / byHorizon[h].length,
+          n: byHorizon[h].length,
+        })),
       recent: ps.slice(0, 20).map((p: any) => ({
         correct: p.direction_correct as boolean,
         confidence: Number(p.confidence),
@@ -129,7 +160,7 @@ async function getData() {
 
     supabase
       .from('model_predictions')
-      .select('model_name, direction, direction_correct, mae, rmse, confidence, assets(ticker)')
+      .select('model_name, direction, direction_correct, mae, rmse, confidence, horizon_days, assets(ticker)')
       .eq('status', 'closed')
       .not('direction_correct', 'is', null)
       .order('created_at', { ascending: false })
