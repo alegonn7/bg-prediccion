@@ -91,7 +91,6 @@ const DAILY_MODELS: ModelMeta[] = [
     whatItDoes: 'RSI elevado + MACD en positivo + ROC creciente en múltiples períodos = momentum alcista confirmado. El modelo aprende que el momentum se diluye con el tiempo: señales de 5d son más predictivas para 7–14d que para 90d.',
     features: ['rsi_norm','macd_norm','roc5','roc10','roc20'],
     horizonNote: 'Señales se disipan rápidamente. Mayor utilidad en 7–14d; en 90d el coeficiente de roc5 colapsa.',
-    decay: 'fast',
     intradayOnly: false,
   },
   {
@@ -108,7 +107,6 @@ const DAILY_MODELS: ModelMeta[] = [
     whatItDoes: 'OBV al alza + ROC positivo + patrón de vela alcista + precio sobre SMA20 = confluencia de confirmación volumétrica. El modelo aprende que las subidas sin volumen son menos sostenibles que las confirmadas por OBV.',
     features: ['obv_dir','roc5','candle','vs20'],
     horizonNote: 'Señales de volumen son más relevantes en 7–14d. El OBV pierde poder predictivo en horizontes de 60–90d.',
-    decay: 'fast',
     intradayOnly: false,
   },
   {
@@ -133,7 +131,6 @@ const DAILY_MODELS: ModelMeta[] = [
     whatItDoes: 'La señal de vela (+1/-1/0) se pondera por el contexto: precio vs SMA20 (¿en tendencia o contra-tendencia?), RSI (¿zona de sobrecompra/sobreventa?) y Bollinger %B (¿en extremo de banda?). El modelo aprende que los patrones de vela en zona extrema + contexto favorable son más predictivos.',
     features: ['candle','vs20','rsi_norm','bb_pos'],
     horizonNote: 'Señales de precio puro de muy corto plazo. Útil principalmente en 7–14d. Se diluyen rápido.',
-    decay: 'fast',
     intradayOnly: false,
   },
   {
@@ -159,7 +156,6 @@ const DAILY_MODELS: ModelMeta[] = [
     whatItDoes: 'RSI (miedo/codicia), Bollinger %B (¿cerca del límite extremo?), ROC5 (impulso psicológico inmediato) y patrones de vela (decisión del día) forman un "termómetro de sentimiento". El modelo aprende cuándo el exceso emocional en una dirección predice continuación vs agotamiento.',
     features: ['rsi_norm','bb_pos','roc5','candle'],
     horizonNote: 'El sentimiento es volátil. Útil en 7–14d. En horizontes más largos el "ruido emocional" se cancela.',
-    decay: 'fast',
     intradayOnly: false,
   },
   {
@@ -168,7 +164,6 @@ const DAILY_MODELS: ModelMeta[] = [
     whatItDoes: 'vs20 mide la desviación actual. ROC en distintas ventanas detecta si la tendencia de la desviación es nueva o antigua. Una desviación positiva grande + ROC decelerando = señal de que el precio ya "corrió demasiado" y puede regresar. Nótese que usa vs20 como distancia a la media, no como señal de tendencia.',
     features: ['roc5','roc10','roc20','vs20'],
     horizonNote: 'La regresión estadística opera principalmente en 7–14d. En 60–90d dominan las tendencias sobre la reversión.',
-    decay: 'fast',
     intradayOnly: false,
   },
   {
