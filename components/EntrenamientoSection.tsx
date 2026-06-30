@@ -147,7 +147,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
                 fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
               }}
             >
-              {trainingAll ? 'Entrenando todo...' : `Entrenar todo ahora (${Math.max(0, 100 - done)} pendientes)`}
+              {trainingAll ? 'Entrenando todo...' : `Entrenar todo ahora (${Math.max(0, total - done)} pendientes)`}
             </button>
             <button
               onClick={() => handleTrigger(false)}
