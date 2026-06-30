@@ -54,6 +54,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
   const [triggering, setTriggering] = useState(false)
   const [triggerResult, setTriggerResult] = useState<string | null>(null)
   const [trainingAll, setTrainingAll] = useState(false)
+  const [retraining, setRetraining] = useState(false)
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -77,26 +78,33 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
   const modelNames = [...new Set([...horizonWeights.map(h => h.model_name), ...globalWeights.map(g => g.model_name)])]
     .sort()
 
-  async function handleTrigger(all = false) {
-    if (all) setTrainingAll(true); else setTriggering(true)
+  async function handleTrigger(all = false, force = false) {
+    if (force) setRetraining(true)
+    else if (all) setTrainingAll(true)
+    else setTriggering(true)
     setTriggerResult(null)
     try {
-      const url = all ? '/api/backtest/trigger?all=true' : '/api/backtest/trigger'
+      let url = '/api/backtest/trigger'
+      if (all || force) url += '?all=true'
+      if (force) url += '&force=true'
       const res = await fetch(url, { method: 'POST' })
       const json = await res.json()
       if (json.triggered > 0) {
-        setTriggerResult(all
-          ? `Entrenando ${json.triggered} activos en ${json.waves} oleadas de 25 — tarda ~${Math.ceil(json.waves * 12)} segundos. Recargá la página en 2 minutos.`
-          : `Disparado: ${(json.tickers as string[]).join(', ')}`
+        setTriggerResult(
+          `Entrenando ${json.triggered} activos en ${json.waves} oleadas de 25 — tarda ~${Math.ceil(json.waves * 12)} segundos. Recargá la página en 2 minutos.`
         )
       } else {
-        setTriggerResult('Nada pendiente — todos los activos ya están entrenados.')
+        setTriggerResult(all && !force
+          ? 'Nada pendiente — todos los activos ya están entrenados. Usá "Reentrenar todo" para forzar.'
+          : `Disparado: ${(json.tickers as string[])?.join(', ') ?? '0'}`
+        )
       }
     } catch {
       setTriggerResult('Error al disparar.')
     } finally {
       setTriggering(false)
       setTrainingAll(false)
+      setRetraining(false)
     }
   }
 
@@ -138,25 +146,38 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               onClick={() => handleTrigger(true)}
-              disabled={trainingAll || triggering}
+              disabled={trainingAll || triggering || retraining}
               style={{
                 background: trainingAll ? 'var(--border)' : '#16a34a',
                 color: '#fff', border: 'none', borderRadius: 7,
                 padding: '10px 22px', fontSize: 13, fontWeight: 700,
-                cursor: (trainingAll || triggering) ? 'default' : 'pointer',
+                cursor: (trainingAll || triggering || retraining) ? 'default' : 'pointer',
                 fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
               }}
             >
-              {trainingAll ? 'Entrenando todo...' : `Entrenar todo ahora (${Math.max(0, total - done)} pendientes)`}
+              {trainingAll ? 'Entrenando...' : `Entrenar pendientes (${Math.max(0, total - done)})`}
+            </button>
+            <button
+              onClick={() => handleTrigger(false, true)}
+              disabled={triggering || trainingAll || retraining}
+              style={{
+                background: retraining ? 'var(--border)' : '#b45309',
+                color: '#fff', border: 'none', borderRadius: 7,
+                padding: '10px 22px', fontSize: 13, fontWeight: 700,
+                cursor: (triggering || trainingAll || retraining) ? 'default' : 'pointer',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              }}
+            >
+              {retraining ? 'Reentrenando...' : `Reentrenar todo (${total})`}
             </button>
             <button
               onClick={() => handleTrigger(false)}
-              disabled={triggering || trainingAll}
+              disabled={triggering || trainingAll || retraining}
               style={{
-                background: (triggering || trainingAll) ? 'var(--border)' : 'var(--card)',
+                background: (triggering || trainingAll || retraining) ? 'var(--border)' : 'var(--card)',
                 color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 7,
                 padding: '9px 18px', fontSize: 12, fontWeight: 500,
-                cursor: (triggering || trainingAll) ? 'default' : 'pointer',
+                cursor: (triggering || trainingAll || retraining) ? 'default' : 'pointer',
                 fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
               }}
             >
@@ -167,7 +188,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights }: Pr
             <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{triggerResult}</div>
           )}
           <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
-            El cron automático procesa 10 activos/día a las 02:00 UTC · "Entrenar todo" dispara en oleadas de 25 con 3s de espera entre oleadas
+            El cron automático procesa 10 activos/día a las 02:00 UTC · "Reentrenar todo" fuerza el reentrenamiento aunque ya estén completados (incluye datos reales acumulados)
           </div>
         </div>
       )}

@@ -23,7 +23,8 @@ async function fireAsset(ticker: string): Promise<{ ticker: string; ok: boolean 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { searchParams } = new URL(req.url)
-  const all = searchParams.get('all') === 'true'
+  const all   = searchParams.get('all')   === 'true'
+  const force = searchParams.get('force') === 'true'
   const limit = all ? 200 : 10
 
   const { data: pending } = await supabase
@@ -40,9 +41,16 @@ export async function POST(req: NextRequest) {
   for (const r of (runs ?? [])) runMap[r.ticker] = r.status
 
   const toRun = (pending ?? [])
-    .filter(a => !runMap[a.ticker] || runMap[a.ticker] === 'error')
+    .filter(a => force || !runMap[a.ticker] || runMap[a.ticker] === 'error')
     .slice(0, limit)
     .map(a => a.ticker)
+
+  // En modo force: resetear los que ya están done para mostrar progreso correcto
+  if (force && toRun.length > 0) {
+    await supabase.from('backtest_runs')
+      .update({ status: 'pending', dates_processed: 0, predictions_evaluated: 0, error_msg: null })
+      .in('ticker', toRun)
+  }
 
   if (toRun.length === 0) {
     return NextResponse.json({ ok: true, triggered: 0, message: 'Nada pendiente' })
