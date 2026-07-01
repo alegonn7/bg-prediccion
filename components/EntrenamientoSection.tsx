@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { BacktestModelStat } from './ModelsSection'
 import type { ChangelogEntry, XgbHistoryEntry } from '@/app/page'
 
@@ -269,6 +269,15 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [xgbTrainingAll, setXgbTrainingAll] = useState(false)
   const [xgbPredicting, setXgbPredicting] = useState(false)
   const [xgbResult, setXgbResult] = useState<string | null>(null)
+  const [xgbJobId, setXgbJobId] = useState<string | null>(null)
+  const [xgbProgress, setXgbProgress] = useState<{
+    status: string
+    current_model: string | null
+    models_done: number
+    models_total: number
+    elapsed: number
+    estimated_remaining: number | null
+  } | null>(null)
   const [showXgbHistory, setShowXgbHistory] = useState(false)
   const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'activos' | 'historial'>('resumen')
   const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
@@ -281,6 +290,51 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [showXgbChart, setShowXgbChart] = useState(true)
   const [xgbChartModel, setXgbChartModel] = useState<string>('all')
   const [showExplanation, setShowExplanation] = useState(false)
+
+  useEffect(() => {
+    if (!xgbJobId) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/xgb-train-status?jobId=${xgbJobId}`)
+        const json = await res.json()
+        if (!json.ok) return
+        setXgbProgress({
+          status: json.status,
+          current_model: json.current_model,
+          models_done: json.models_done,
+          models_total: json.models_total,
+          elapsed: json.elapsed,
+          estimated_remaining: json.estimated_remaining,
+        })
+        if (json.status === 'done') {
+          const lines = Object.entries(json.results ?? {}).map(([mn, buckets]: [string, any]) => {
+            if (buckets?.error) return `${mn}: error — ${buckets.error}`
+            const accs = Object.entries(buckets ?? {})
+              .filter(([, v]: any) => !v?.skipped)
+              .map(([b, v]: any) => `${b}d:${((v?.accuracy ?? 0) * 100).toFixed(0)}%`)
+              .join(' ')
+            return `${mn}: ${accs || 'entrenado'}`
+          })
+          setXgbResult(lines.join('\n'))
+          setXgbJobId(null)
+          setXgbProgress(null)
+          setXgbTrainingAll(false)
+        } else if (json.status === 'error') {
+          setXgbResult(`Error: ${json.error ?? 'desconocido'}`)
+          setXgbJobId(null)
+          setXgbProgress(null)
+          setXgbTrainingAll(false)
+        }
+      } catch { /* ignore transient poll errors */ }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [xgbJobId])
+
+  function fmtSeconds(s: number): string {
+    if (s < 60) return `${s}s`
+    const m = Math.floor(s / 60), r = s % 60
+    return r > 0 ? `${m}m ${r}s` : `${m}m`
+  }
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -315,54 +369,52 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const XGB_MODELS = ['tendencia','momentum','volatilidad','volumen','estructura','elliott','velas','macro','fundamental','sentimiento','regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa']
 
   async function handleXGBTrain(modelName: string | 'all') {
-    const allModels = modelName === 'all'
-    if (allModels) setXgbTrainingAll(true)
-    else setXgbTrainingModel(modelName)
-    setXgbResult(null)
-    try {
-      if (allModels) {
-        // Single API call — server fetches price data once and trains all 16 models
-        setXgbResult('Entrenando todos los modelos (descargando datos una sola vez)...')
+    if (modelName === 'all') {
+      setXgbTrainingAll(true)
+      setXgbResult(null)
+      setXgbProgress(null)
+      try {
         const res = await fetch('/api/xgb-train-all', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         })
         const json = await res.json()
-        if (json.ok) {
-          const lines = Object.entries(json.results ?? {}).map(([mn, buckets]: [string, any]) => {
-            if (buckets.error) return `${mn}: error — ${buckets.error}`
-            const accs = Object.entries(buckets)
-              .filter(([, v]: any) => !v.skipped)
-              .map(([b, v]: any) => `${b}d:${(v.accuracy * 100).toFixed(0)}%`)
-              .join(' ')
-            return `${mn}: ${accs || 'entrenado'}`
-          })
-          setXgbResult(lines.join('\n'))
+        if (json.ok && json.job_id) {
+          setXgbJobId(json.job_id)
+          // polling useEffect takes over from here
         } else {
-          setXgbResult(`Error: ${json.error}`)
+          setXgbResult(`Error: ${json.error ?? 'sin respuesta'}`)
+          setXgbTrainingAll(false)
         }
+      } catch {
+        setXgbResult('Error de conexión.')
+        setXgbTrainingAll(false)
+      }
+      return
+    }
+
+    setXgbTrainingModel(modelName)
+    setXgbResult(null)
+    try {
+      const res = await fetch('/api/xgb-train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model_name: modelName }),
+      })
+      const json = await res.json()
+      if (json.ok) {
+        const accs = Object.entries(json.buckets ?? {})
+          .filter(([, v]: any) => !v.skipped)
+          .map(([b, v]: any) => `${b}d: ${(v.accuracy * 100).toFixed(1)}% (n=${v.samples})`)
+          .join(' · ')
+        setXgbResult(`${modelName} entrenado: ${accs}`)
       } else {
-        const res = await fetch('/api/xgb-train', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model_name: modelName }),
-        })
-        const json = await res.json()
-        if (json.ok) {
-          const accs = Object.entries(json.buckets ?? {})
-            .filter(([, v]: any) => !v.skipped)
-            .map(([b, v]: any) => `${b}d: ${(v.accuracy * 100).toFixed(1)}% (n=${v.samples})`)
-            .join(' · ')
-          setXgbResult(`${modelName} entrenado: ${accs}`)
-        } else {
-          setXgbResult(`Error: ${json.error}`)
-        }
+        setXgbResult(`Error: ${json.error}`)
       }
     } catch {
       setXgbResult('Error de conexión.')
     } finally {
       setXgbTrainingModel(null)
-      setXgbTrainingAll(false)
     }
   }
 
@@ -597,7 +649,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
                   fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
                 }}
               >
-                {xgbTrainingAll ? `Entrenando ${xgbTrainingModel ?? ''}…` : 'Entrenar todos (16)'}
+                {xgbTrainingAll ? 'Entrenando…' : 'Entrenar todos (16)'}
               </button>
               <button
                 onClick={handleXGBPredict}
@@ -614,6 +666,47 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               </button>
             </div>
           </div>
+
+          {/* Progress bar cuando está entrenando todos */}
+          {xgbProgress && xgbTrainingAll && (
+            <div style={{
+              background: 'var(--bg)', border: '1px solid #7c3aed44',
+              borderRadius: 8, padding: '14px 16px',
+              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+            }}>
+              {/* Phase label */}
+              <div style={{ fontSize: 11, color: '#a78bfa', fontWeight: 700, marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                {xgbProgress.status === 'fetching' ? 'Descargando datos del mercado...' : 'Entrenando modelos XGBoost'}
+              </div>
+
+              {/* Progress bar */}
+              {xgbProgress.status === 'training' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+                    <span>{xgbProgress.current_model ?? '…'}</span>
+                    <span>{xgbProgress.models_done}/{xgbProgress.models_total} modelos</span>
+                  </div>
+                  <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.round(xgbProgress.models_done / xgbProgress.models_total * 100)}%`,
+                      background: 'linear-gradient(90deg, #7c3aed, #a78bfa)',
+                      borderRadius: 3,
+                      transition: 'width 0.5s ease',
+                    }} />
+                  </div>
+                </>
+              )}
+
+              {/* Time row */}
+              <div style={{ display: 'flex', gap: 20, fontSize: 11, color: 'var(--text-hint)' }}>
+                <span>Transcurrido: <strong style={{ color: 'var(--text-muted)' }}>{fmtSeconds(xgbProgress.elapsed)}</strong></span>
+                {xgbProgress.estimated_remaining != null && xgbProgress.estimated_remaining > 0 && (
+                  <span>Estimado restante: <strong style={{ color: 'var(--text-muted)' }}>~{fmtSeconds(xgbProgress.estimated_remaining)}</strong></span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Grid de modelos individuales */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
