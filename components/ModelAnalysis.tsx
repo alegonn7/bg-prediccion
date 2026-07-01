@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import type { ModelDetailStat } from '@/app/page'
+import { useState, useMemo } from 'react'
+import type { ModelDetailStat, RawModelPred } from '@/app/page'
 import { ModelPerformance } from './ModelPerformance'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
@@ -379,21 +379,135 @@ function ModelRow({ stat, rank, expanded, onToggle }: {
 }
 
 type SortDir = 'desc' | 'asc'
+type DateRange = '7d' | '30d' | '90d' | 'month' | 'all'
 
-export function ModelAnalysisSection({ stats }: { stats: ModelDetailStat[] }) {
+const DATE_RANGE_OPTS: { id: DateRange; label: string }[] = [
+  { id: '7d',    label: 'Últ. 7d' },
+  { id: '30d',   label: 'Últ. 30d' },
+  { id: '90d',   label: 'Últ. 90d' },
+  { id: 'month', label: 'Este mes' },
+  { id: 'all',   label: 'Todo' },
+]
+
+const ALL_MODELS = [
+  'tendencia','momentum','volatilidad','volumen','estructura','elliott',
+  'velas','macro','fundamental','sentimiento',
+  'regresion','reversion','divergencias',
+  'estacionalidad','beta_mercado','fuerza_relativa',
+]
+
+function buildStats(preds: RawModelPred[]): ModelDetailStat[] {
+  const byModel: Record<string, RawModelPred[]> = {}
+  for (const mn of ALL_MODELS) byModel[mn] = []
+  for (const p of preds) {
+    if (!byModel[p.model_name]) byModel[p.model_name] = []
+    byModel[p.model_name].push(p)
+  }
+  const HORIZON_BUCKETS = [1, 2, 7, 14, 30, 60, 90]
+  const LOW = 0.40, HIGH = 0.65
+
+  return ALL_MODELS.map(mn => {
+    const ps = byModel[mn] ?? []
+    const total   = ps.length
+    const correct = ps.filter(p => p.direction_correct).length
+    const up   = ps.filter(p => p.direction === 'up')
+    const down = ps.filter(p => p.direction === 'down')
+    const maes = ps.filter(p => p.mae != null).map(p => Number(p.mae))
+    const sqs  = ps.filter(p => p.rmse != null).map(p => Number(p.rmse))
+    const confs = ps.map(p => Number(p.confidence))
+    const lowConf  = ps.filter(p => Number(p.confidence) <  LOW)
+    const midConf  = ps.filter(p => Number(p.confidence) >= LOW && Number(p.confidence) < HIGH)
+    const highConf = ps.filter(p => Number(p.confidence) >= HIGH)
+
+    const byHorizon: Record<number, number[]> = {}
+    for (const h of HORIZON_BUCKETS) byHorizon[h] = []
+    for (const p of ps) {
+      if (p.mae == null) continue
+      const h = Number(p.horizon_days)
+      const bucket = HORIZON_BUCKETS.find(b => h <= b) ?? 90
+      byHorizon[bucket].push(Number(p.mae))
+    }
+
+    const byTicker: Record<string, { total: number; correct: number; maes: number[] }> = {}
+    for (const p of ps) {
+      const t = p.assets?.ticker ?? '?'
+      if (!byTicker[t]) byTicker[t] = { total: 0, correct: 0, maes: [] }
+      byTicker[t].total++
+      if (p.direction_correct) byTicker[t].correct++
+      if (p.mae != null) byTicker[t].maes.push(Number(p.mae))
+    }
+
+    const correctPreds = ps.filter(p => p.direction_correct && p.mae != null)
+    const wrongPreds   = ps.filter(p => !p.direction_correct && p.mae != null)
+    const avgMae = (arr: RawModelPred[]) => arr.length ? arr.reduce((s, p) => s + Number(p.mae), 0) / arr.length : null
+
+    return {
+      model_name: mn, total, correct,
+      dir_accuracy: total >= 3 ? correct / total : null,
+      called_up: up.length, correct_up: up.filter(p => p.direction_correct).length,
+      called_down: down.length, correct_down: down.filter(p => p.direction_correct).length,
+      mae_avg: maes.length ? maes.reduce((a, b) => a + b, 0) / maes.length : null,
+      rmse_avg: sqs.length ? Math.sqrt(sqs.reduce((a, b) => a + b, 0) / sqs.length) : null,
+      mae_when_correct: avgMae(correctPreds),
+      mae_when_wrong:   avgMae(wrongPreds),
+      avg_confidence: confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : 0,
+      conf_low:  { total: lowConf.length,  correct: lowConf.filter(p => p.direction_correct).length },
+      conf_mid:  { total: midConf.length,  correct: midConf.filter(p => p.direction_correct).length },
+      conf_high: { total: highConf.length, correct: highConf.filter(p => p.direction_correct).length },
+      by_ticker: Object.entries(byTicker)
+        .map(([ticker, v]) => ({
+          ticker, total: v.total, correct: v.correct,
+          accuracy: v.total > 0 ? v.correct / v.total : 0,
+          mae_avg: v.maes.length ? v.maes.reduce((a, b) => a + b, 0) / v.maes.length : null,
+        }))
+        .sort((a, b) => b.total - a.total),
+      mae_by_horizon: HORIZON_BUCKETS
+        .filter(h => byHorizon[h].length > 0)
+        .map(h => ({ horizon: h, mae: byHorizon[h].reduce((a, b) => a + b, 0) / byHorizon[h].length, n: byHorizon[h].length })),
+      recent: ps.slice(0, 20).map(p => ({
+        correct: p.direction_correct as boolean,
+        confidence: Number(p.confidence),
+        ticker: p.assets?.ticker ?? '?',
+      })),
+    }
+  })
+}
+
+function filterPredsByDate(preds: RawModelPred[], range: DateRange): RawModelPred[] {
+  if (range === 'all') return preds
+  const now = new Date()
+  return preds.filter(p => {
+    const d = p.target_date ? new Date(p.target_date + 'T12:00:00') : null
+    if (!d) return false
+    if (range === '7d')    return now.getTime() - d.getTime() <= 7  * 86400000
+    if (range === '30d')   return now.getTime() - d.getTime() <= 30 * 86400000
+    if (range === '90d')   return now.getTime() - d.getTime() <= 90 * 86400000
+    if (range === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+    return true
+  })
+}
+
+export function ModelAnalysisSection({ stats, rawPreds }: { stats: ModelDetailStat[]; rawPreds: RawModelPred[] }) {
   const [expanded,   setExpanded]   = useState<string | null>(null)
   const [sortKey,    setSortKey]    = useState<SortKey>('total')
   const [sortDir,    setSortDir]    = useState<SortDir>('desc')
+  const [dateRange,  setDateRange]  = useState<DateRange>('all')
 
-  const totalClosed = stats.reduce((s, m) => s + m.total, 0)
-  const totalCorrect = stats.reduce((s, m) => s + m.correct, 0)
+  const activeStats = useMemo(() => {
+    if (dateRange === 'all') return stats
+    const filtered = filterPredsByDate(rawPreds, dateRange)
+    return buildStats(filtered)
+  }, [dateRange, stats, rawPreds])
+
+  const totalClosed = activeStats.reduce((s, m) => s + m.total, 0)
+  const totalCorrect = activeStats.reduce((s, m) => s + m.correct, 0)
 
   function sort(key: SortKey) {
     if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
     else { setSortKey(key); setSortDir('desc') }
   }
 
-  const sorted = [...stats].sort((a, b) => {
+  const sorted = [...activeStats].sort((a, b) => {
     let va: number, vb: number
     switch (sortKey) {
       case 'accuracy':   va = a.dir_accuracy ?? -1; vb = b.dir_accuracy ?? -1; break
@@ -430,15 +544,39 @@ export function ModelAnalysisSection({ stats }: { stats: ModelDetailStat[] }) {
 
   return (
     <section style={{ marginBottom: 64 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
-        <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>05</span>
-        <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
-          Análisis de modelos
-        </h2>
-        <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>
-          {totalClosed > 0 ? `${totalClosed} evaluaciones · ${Math.round(totalCorrect / totalClosed * 100)}% acierto global` : 'sin predicciones cerradas aún'}
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flex: 1, minWidth: 0 }}>
+          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)', flexShrink: 0 }}>05</span>
+          <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
+            Análisis de modelos
+          </h2>
+          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>
+            {totalClosed > 0 ? `${totalClosed} eval. · ${Math.round(totalCorrect / totalClosed * 100)}% acierto` : 'sin datos'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {DATE_RANGE_OPTS.map(o => (
+            <button
+              key={o.id}
+              onClick={() => { setDateRange(o.id); setExpanded(null) }}
+              style={{
+                padding: '4px 11px', fontSize: 11, fontWeight: dateRange === o.id ? 700 : 400,
+                background: dateRange === o.id ? 'var(--text)' : 'var(--bg-card)',
+                color: dateRange === o.id ? 'var(--bg)' : 'var(--text-muted)',
+                border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                fontFamily: MONO,
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
+      {dateRange !== 'all' && totalClosed === 0 && (
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px', marginBottom: 12, fontSize: 12, color: 'var(--text-hint)' }}>
+          Sin predicciones cerradas en el período seleccionado. Probá con un período más amplio.
+        </div>
+      )}
 
       {totalClosed === 0 && (
         <div style={{

@@ -12,7 +12,7 @@ import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ModelDetailStat, ChangelogEntry, XgbHistoryEntry } from '@/app/page'
+import type { ModelDetailStat, RawModelPred, ChangelogEntry, XgbHistoryEntry } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 
@@ -27,6 +27,7 @@ type Props = {
   assets: any[]
   openPredsSummary: any[]
   modelDetailStats: ModelDetailStat[]
+  rawModelPreds: RawModelPred[]
   backtestRuns: BacktestRun[]
   horizonWeights: HorizonWeight[]
   modelLRParams: ModelLRParam[]
@@ -37,7 +38,7 @@ type Props = {
 
 export function DashboardClient({
   open, closed, modelWeights, hits, total, assets, openPredsSummary,
-  modelDetailStats, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
+  modelDetailStats, rawModelPreds, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -109,7 +110,7 @@ export function DashboardClient({
         {active === 'intraday'      && <IntradaySectionClient />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
-        {active === 'analysis'      && <ModelAnalysisSection stats={modelDetailStats} />}
+        {active === 'analysis'      && <ModelAnalysisSection stats={modelDetailStats} rawPreds={rawModelPreds} />}
         {active === 'news'          && <NewsSectionClient />}
         {active === 'argentina'     && <ArgentinaSectionClient />}
         {active === 'entrenamiento' && (

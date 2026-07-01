@@ -44,6 +44,18 @@ const ALL_MODELS = [
   'estacionalidad','beta_mercado','fuerza_relativa',
 ]
 
+export type RawModelPred = {
+  model_name: string
+  direction: string
+  direction_correct: boolean | null
+  mae: number | null
+  rmse: number | null
+  confidence: number
+  horizon_days: number
+  target_date: string | null
+  assets: { ticker: string } | null
+}
+
 export type ModelDetailStat = {
   model_name: string
   total: number
@@ -202,7 +214,7 @@ async function getData() {
 
     supabase
       .from('model_predictions')
-      .select('model_name, direction, direction_correct, mae, rmse, confidence, horizon_days, assets(ticker)')
+      .select('model_name, direction, direction_correct, mae, rmse, confidence, horizon_days, target_date, assets(ticker)')
       .eq('status', 'closed')
       .not('direction_correct', 'is', null)
       .order('created_at', { ascending: false })
@@ -277,7 +289,8 @@ async function getData() {
     created_at: p.created_at,
   }))
 
-  const modelDetailStats = buildModelStats(closedModelPreds ?? [])
+  const rawModelPreds: RawModelPred[] = (closedModelPreds ?? []) as unknown as RawModelPred[]
+  const modelDetailStats = buildModelStats(rawModelPreds)
 
   // Aggregate backtest_stats by model+horizon across all tickers
   const bsAggMap: Record<string, BacktestModelStat> = {}
@@ -314,6 +327,7 @@ async function getData() {
     assets: allAssets ?? [],
     openPredsSummary,
     modelDetailStats,
+    rawModelPreds,
     backtestRuns: (backtestRuns ?? []) as BacktestRun[],
     horizonWeights: (horizonWeights ?? []) as HorizonWeight[],
     modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
@@ -328,7 +342,7 @@ export const revalidate = 300
 export default async function Dashboard() {
   const {
     open, closed, modelWeights, hits, total, assets,
-    openPredsSummary, modelDetailStats,
+    openPredsSummary, modelDetailStats, rawModelPreds,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog, xgbHistory,
   } = await getData()
@@ -342,6 +356,7 @@ export default async function Dashboard() {
       assets={assets}
       openPredsSummary={openPredsSummary}
       modelDetailStats={modelDetailStats}
+      rawModelPreds={rawModelPreds}
       backtestRuns={backtestRuns}
       horizonWeights={horizonWeights}
       modelLRParams={modelLRParams}

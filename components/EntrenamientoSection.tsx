@@ -277,6 +277,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [historialPage, setHistorialPage] = useState(0)
   const [historialModelSearch, setHistorialModelSearch] = useState('')
   const [historialDateFilter, setHistorialDateFilter] = useState<string>('all')
+  const [historialHorizonFilter, setHistorialHorizonFilter] = useState<number | 'all'>('all')
   const [showXgbChart, setShowXgbChart] = useState(true)
   const [xgbChartModel, setXgbChartModel] = useState<string>('all')
   const [showExplanation, setShowExplanation] = useState(false)
@@ -1316,6 +1317,26 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
             <span>· Borde azul = params LR · Borde ámbar = peso Brier</span>
           </div>
 
+          {/* Filtro por horizonte */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-hint)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>Horizonte:</span>
+            {(['all', 7, 14, 30, 60, 90] as const).map(h => (
+              <button
+                key={h}
+                onClick={() => { setHistorialHorizonFilter(h); setHistorialPage(0) }}
+                style={{
+                  padding: '4px 10px', fontSize: 11, fontWeight: historialHorizonFilter === h ? 700 : 400,
+                  background: historialHorizonFilter === h ? 'var(--text)' : 'var(--card)',
+                  color: historialHorizonFilter === h ? 'var(--bg)' : 'var(--text-muted)',
+                  border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                  fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                }}
+              >
+                {h === 'all' ? 'Todos' : `${h}d`}
+              </button>
+            ))}
+          </div>
+
           {/* Filtros de fecha + modelo */}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             {/* Date selector */}
@@ -1376,6 +1397,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               if (changelogFilter === 'lr_params' && c.change_type !== 'lr_params') return false
               if (changelogFilter === 'weight' && c.change_type !== 'weight') return false
               if (historialDateFilter !== 'all' && !c.snapshot_at.startsWith(historialDateFilter)) return false
+              if (historialHorizonFilter !== 'all' && c.horizon_bucket !== historialHorizonFilter) return false
               if (historialModelSearch && !c.model_name.includes(historialModelSearch.toLowerCase())) return false
               return true
             })
