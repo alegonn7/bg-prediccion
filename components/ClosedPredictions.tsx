@@ -17,26 +17,76 @@ type ClosedConsensus = {
   assets: { ticker: string; name: string } | null
 }
 
+type DateFilter = '7d' | '30d' | 'month' | 'all'
+
+function filterByDate(items: ClosedConsensus[], filter: DateFilter): ClosedConsensus[] {
+  if (filter === 'all') return items
+  const now = new Date()
+  return items.filter(r => {
+    const d = new Date(r.target_date + 'T12:00:00')
+    if (filter === '7d')    return now.getTime() - d.getTime() <= 7  * 86400000
+    if (filter === '30d')   return now.getTime() - d.getTime() <= 30 * 86400000
+    if (filter === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+    return true
+  })
+}
+
+const DATE_FILTER_OPTS: { id: DateFilter; label: string }[] = [
+  { id: '7d',    label: 'Últ. 7 días' },
+  { id: '30d',   label: 'Últ. 30 días' },
+  { id: 'month', label: 'Este mes' },
+  { id: 'all',   label: 'Todo' },
+]
+
 export function ClosedPredictionsSection({ results }: { results: ClosedConsensus[] }) {
   const [page, setPage] = useState(1)
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
 
-  const pageItems = results.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const filtered = filterByDate(results, dateFilter)
+  const hits    = filtered.filter(r => r.direction_correct === true).length
+  const misses  = filtered.filter(r => r.direction_correct === false).length
+  const accuracy = (hits + misses) > 0 ? (hits / (hits + misses) * 100).toFixed(1) : null
+
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   return (
     <section>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
-        <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>03</span>
-        <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
-          Historial de cierres
-        </h2>
-        {results.length > 0 && (
-          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>{results.length} total</span>
-        )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flex: 1 }}>
+          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>03</span>
+          <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
+            Historial de cierres
+          </h2>
+          {filtered.length > 0 && (
+            <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>
+              {filtered.length} pred.{accuracy ? ` · ${accuracy}% correctas` : ''}
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {DATE_FILTER_OPTS.map(o => (
+            <button
+              key={o.id}
+              onClick={() => { setDateFilter(o.id); setPage(1) }}
+              style={{
+                padding: '4px 11px', fontSize: 11, fontWeight: dateFilter === o.id ? 700 : 400,
+                background: dateFilter === o.id ? 'var(--text)' : 'var(--bg-card)',
+                color: dateFilter === o.id ? 'var(--bg)' : 'var(--text-muted)',
+                border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                fontFamily: MONO,
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {results.length === 0 ? (
+      {filtered.length === 0 ? (
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
-          Todavía no hay predicciones cerradas. Los cierres ocurren al llegar a la fecha objetivo.
+          {results.length === 0
+            ? 'Todavía no hay predicciones cerradas. Los cierres ocurren al llegar a la fecha objetivo.'
+            : `Sin predicciones cerradas en el período seleccionado.`}
         </div>
       ) : (
         <>
@@ -107,7 +157,7 @@ export function ClosedPredictionsSection({ results }: { results: ClosedConsensus
 
           <Pagination
             page={page}
-            totalItems={results.length}
+            totalItems={filtered.length}
             pageSize={PAGE_SIZE}
             onChange={p => { setPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
           />

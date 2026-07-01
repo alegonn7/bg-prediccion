@@ -276,6 +276,10 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [activosFilter, setActivosFilter] = useState<'all' | 'done' | 'running' | 'pending' | 'error'>('all')
   const [historialPage, setHistorialPage] = useState(0)
   const [historialModelSearch, setHistorialModelSearch] = useState('')
+  const [historialDateFilter, setHistorialDateFilter] = useState<string>('all')
+  const [showXgbChart, setShowXgbChart] = useState(true)
+  const [xgbChartModel, setXgbChartModel] = useState<string>('all')
+  const [showExplanation, setShowExplanation] = useState(false)
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -527,9 +531,46 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
           {triggerResult && (
             <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, background: 'var(--bg)', borderRadius: 6, padding: '8px 12px' }}>{triggerResult}</div>
           )}
-          <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
-            Cron automático: 10 activos/día a las 02:00 UTC · "Reentrenar todo" incluye datos reales acumulados (predicciones cerradas verificadas)
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-hint)', flex: 1 }}>
+              Cron automático: 10 activos/día a las 02:00 UTC · "Reentrenar todo" incluye datos reales acumulados (predicciones cerradas verificadas)
+            </div>
+            <button
+              onClick={() => setShowExplanation(s => !s)}
+              style={{ fontSize: 11, color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', whiteSpace: 'nowrap' }}
+            >
+              {showExplanation ? '▲ Ocultar' : '▼ ¿Qué diferencia hay entre Federar y XGBoost?'}
+            </button>
           </div>
+          {showExplanation && (
+            <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '14px 16px', border: '1px solid var(--border)', fontSize: 12, lineHeight: 1.7, color: 'var(--text-muted)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <div style={{ fontWeight: 700, color: '#3b82f6', marginBottom: 6, fontSize: 13 }}>Federar modelos LR</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <li>Corre un backtest por activo (16 modelos × 5 horizontes = 80 clasificadores)</li>
+                    <li>Cada clasificador es una <b>Regresión Logística (LR)</b> que aprende de los datos históricos de ese activo específico</li>
+                    <li>Luego se "federan": los parámetros de los 50+ activos se <b>promedian</b> para crear un modelo global robusto</li>
+                    <li>Guardado en <code>model_learned_params</code> — usado como <b>55%</b> del consenso final</li>
+                    <li>Fortaleza: adapta pesos por modelo y horizonte según rendimiento en backtest de cada activo</li>
+                  </ul>
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, color: '#7c3aed', marginBottom: 6, fontSize: 13 }}>XGBoost global</div>
+                  <ul style={{ margin: 0, paddingLeft: 16, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <li>Entrena un único modelo de <b>Gradient Boosting</b> usando TODOS los activos juntos (cross-sectional)</li>
+                    <li>Aprende patrones de features técnicos (RSI, ATR, etc.) que se repiten entre activos diferentes</li>
+                    <li>Un modelo por cada combinación <b>nombre × horizonte</b> (ej: "tendencia 30d")</li>
+                    <li>Guardado en <code>xgb_models</code> — usado como <b>45%</b> del consenso final</li>
+                    <li>Fortaleza: detecta patrones universales que el LR por activo puede no ver por falta de datos</li>
+                  </ul>
+                </div>
+              </div>
+              <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--card)', borderRadius: 6, fontSize: 11, color: 'var(--text-hint)', borderLeft: '3px solid #22c55e' }}>
+                <b>Resultado combinado:</b> La predicción final = 55% LR federado + 45% XGBoost. Si ambos coinciden en dirección, la confianza sube. Si discrepan, el LR tiene más peso. El historial de entrenamientos de cada uno se ve por separado abajo.
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -605,6 +646,98 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               {xgbResult}
             </div>
           )}
+
+          {/* Gráfico de precisión XGBoost */}
+          {xgbHistory.length >= 2 && (() => {
+            const XGB_MODELS_LIST = ['tendencia','momentum','volatilidad','volumen','estructura','elliott','velas','macro','fundamental','sentimiento','regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa']
+            const sessionMap = new Map<string, XgbHistoryEntry[]>()
+            for (const e of xgbHistory) {
+              const key = e.trained_at.slice(0, 16)
+              if (!sessionMap.has(key)) sessionMap.set(key, [])
+              sessionMap.get(key)!.push(e)
+            }
+            const sessions = [...sessionMap.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-20)
+            if (sessions.length < 2) return null
+
+            const points = sessions.map(([key, entries]) => {
+              const relevant = xgbChartModel === 'all' ? entries : entries.filter(e => e.model_name === xgbChartModel)
+              if (!relevant.length) return null
+              const avg = relevant.reduce((s, e) => s + e.new_accuracy, 0) / relevant.length
+              const dt = new Date(key + ':00')
+              const label = dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
+              return { key, avg, label }
+            }).filter((p): p is { key: string; avg: number; label: string } => p !== null)
+
+            if (points.length < 2) return null
+
+            const W = 500, H = 90, PL = 28, PR = 8, PT = 8, PB = 20
+            const innerW = W - PL - PR
+            const innerH = H - PT - PB
+            const vals = points.map(p => p.avg)
+            const minV = Math.max(0.40, Math.min(...vals) - 0.03)
+            const maxV = Math.min(0.85, Math.max(...vals) + 0.03)
+            const xS = (i: number) => PL + (i / (points.length - 1)) * innerW
+            const yS = (v: number) => PT + (1 - (v - minV) / (maxV - minV)) * innerH
+            const gridLines = [0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75].filter(v => v >= minV && v <= maxV)
+            const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xS(i)},${yS(p.avg)}`).join(' ')
+            const areaD = `${pathD} L${xS(points.length - 1)},${H - PB} L${xS(0)},${H - PB} Z`
+            const last = points[points.length - 1]
+            const first = points[0]
+            const delta = last.avg - first.avg
+            const lineColor = delta >= 0.005 ? '#22c55e' : delta <= -0.005 ? '#f87171' : '#7c3aed'
+
+            return (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      onClick={() => setShowXgbChart(s => !s)}
+                      style={{ fontSize: 11, color: 'var(--text-hint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      {showXgbChart ? '▲' : '▼'} Gráfico de precisión
+                    </button>
+                    {delta !== 0 && (
+                      <span style={{ fontSize: 11, fontWeight: 700, color: lineColor }}>
+                        {delta > 0 ? '▲' : '▼'}{(Math.abs(delta) * 100).toFixed(1)} pp ({points.length} sesiones)
+                      </span>
+                    )}
+                  </div>
+                  {showXgbChart && (
+                    <select
+                      value={xgbChartModel}
+                      onChange={e => setXgbChartModel(e.target.value)}
+                      style={{ fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}
+                    >
+                      <option value="all">Promedio todos</option>
+                      {XGB_MODELS_LIST.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  )}
+                </div>
+                {showXgbChart && (
+                  <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '8px 4px 2px', border: '1px solid var(--border)' }}>
+                    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 90, display: 'block' }}>
+                      {gridLines.map(v => (
+                        <g key={v}>
+                          <line x1={PL} y1={yS(v)} x2={W - PR} y2={yS(v)} stroke="var(--border)" strokeWidth={0.5} strokeDasharray="3,3" />
+                          <text x={PL - 3} y={yS(v) + 3} fontSize={7} fill="var(--text-hint)" textAnchor="end">{(v * 100).toFixed(0)}%</text>
+                        </g>
+                      ))}
+                      <path d={areaD} fill={lineColor} fillOpacity={0.08} />
+                      <path d={pathD} fill="none" stroke={lineColor} strokeWidth={1.5} strokeLinejoin="round" />
+                      {points.map((p, i) => (
+                        <g key={i}>
+                          <circle cx={xS(i)} cy={yS(p.avg)} r={2.5} fill={lineColor} />
+                          {(i === 0 || i === points.length - 1 || points.length <= 8) && (
+                            <text x={xS(i)} y={H - 4} fontSize={7} fill="var(--text-hint)" textAnchor="middle">{p.label}</text>
+                          )}
+                        </g>
+                      ))}
+                    </svg>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Historial de entrenamientos XGBoost */}
           {xgbHistory.length > 0 && (() => {
@@ -1183,15 +1316,51 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
             <span>· Borde azul = params LR · Borde ámbar = peso Brier</span>
           </div>
 
-          {/* Model search */}
-          <div>
+          {/* Filtros de fecha + modelo */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* Date selector */}
+            {(() => {
+              const dates = [...new Set(
+                changelog
+                  .filter(c => c.trigger !== 'initial')
+                  .map(c => c.snapshot_at.slice(0, 10))
+              )].sort().reverse()
+              if (dates.length === 0) return null
+              return (
+                <select
+                  value={historialDateFilter}
+                  onChange={e => { setHistorialDateFilter(e.target.value); setHistorialPage(0) }}
+                  style={{
+                    padding: '7px 12px', fontSize: 12,
+                    background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7,
+                    color: 'var(--text)', outline: 'none',
+                    fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="all">Todos los días ({dates.length})</option>
+                  {dates.map(d => {
+                    const label = new Date(d + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: 'long', year: 'numeric' })
+                    return <option key={d} value={d}>{label}</option>
+                  })}
+                </select>
+              )
+            })()}
+            {historialDateFilter !== 'all' && (
+              <button
+                onClick={() => { setHistorialDateFilter('all'); setHistorialPage(0) }}
+                style={{ fontSize: 11, color: 'var(--text-hint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+              >
+                × Limpiar fecha
+              </button>
+            )}
             <input
               type="text"
               placeholder="Filtrar por modelo..."
               value={historialModelSearch}
               onChange={e => { setHistorialModelSearch(e.target.value); setHistorialPage(0) }}
               style={{
-                width: '100%', boxSizing: 'border-box',
+                flex: 1, minWidth: 160,
                 padding: '7px 12px', fontSize: 12,
                 background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7,
                 color: 'var(--text)', outline: 'none',
@@ -1206,6 +1375,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               if (changelogFilter === 'changes' && c.trigger === 'initial') return false
               if (changelogFilter === 'lr_params' && c.change_type !== 'lr_params') return false
               if (changelogFilter === 'weight' && c.change_type !== 'weight') return false
+              if (historialDateFilter !== 'all' && !c.snapshot_at.startsWith(historialDateFilter)) return false
               if (historialModelSearch && !c.model_name.includes(historialModelSearch.toLowerCase())) return false
               return true
             })

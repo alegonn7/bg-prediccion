@@ -445,8 +445,8 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
             {displayPrice != null ? `$${displayPrice.toFixed(2)}` : '—'}
           </div>
           {isLive && livePrice.changePct != null && (
-            <div style={{ fontFamily: MONO, fontSize: 10, color: livePrice.changePct >= 0 ? 'var(--up)' : 'var(--down)', marginTop: 1 }}>
-              {livePrice.changePct >= 0 ? '+' : ''}{livePrice.changePct.toFixed(2)}% hoy
+            <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginTop: 1 }}>
+              {livePrice.changePct >= 0 ? '+' : ''}{livePrice.changePct.toFixed(2)}% vela hoy
             </div>
           )}
         </div>
@@ -476,11 +476,14 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
         </div>
       </div>
 
-      {/* Current movement */}
+      {/* Movement from prediction open */}
       {movePct !== null && (
-        <div style={{ background: (movePct >= 0 ? 'var(--up-soft)' : 'var(--down-soft)'), borderRadius: 8, padding: '8px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Movimiento actual</span>
-          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, color: movePct >= 0 ? 'var(--up)' : 'var(--down)' }}>
+        <div style={{ background: (movePct >= 0 ? 'var(--up-soft)' : 'var(--down-soft)'), borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>Desde apertura de esta pred.</div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 2 }}>precio hoy vs precio al predecir</div>
+          </div>
+          <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: movePct >= 0 ? 'var(--up)' : 'var(--down)' }}>
             {movePct >= 0 ? '+' : ''}{movePct.toFixed(2)}%
           </span>
         </div>
