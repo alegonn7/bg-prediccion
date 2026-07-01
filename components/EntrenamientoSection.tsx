@@ -320,7 +320,8 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
           setXgbProgress(null)
           setXgbTrainingAll(false)
         } else if (json.status === 'error') {
-          setXgbResult(`Error: ${json.error ?? 'desconocido'}`)
+          const where = json.failed_model ? ` (falló en: ${json.failed_model})` : ''
+          setXgbResult(`ERROR${where}\n\n${json.error ?? 'Error desconocido'}`)
           setXgbJobId(null)
           setXgbProgress(null)
           setXgbTrainingAll(false)
@@ -730,16 +731,24 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
             ))}
           </div>
 
-          {xgbResult && (
-            <div style={{
-              fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.8,
-              background: 'var(--bg)', borderRadius: 6, padding: '10px 12px',
-              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
-              whiteSpace: 'pre-wrap',
-            }}>
-              {xgbResult}
-            </div>
-          )}
+          {xgbResult && (() => {
+            const isError = xgbResult.startsWith('ERROR')
+            return (
+              <div style={{
+                fontSize: 11, lineHeight: 1.8,
+                background: isError ? '#dc262610' : 'var(--bg)',
+                border: `1px solid ${isError ? '#dc262640' : 'var(--border)'}`,
+                borderLeft: `3px solid ${isError ? '#dc2626' : 'var(--border)'}`,
+                borderRadius: 6, padding: '10px 12px',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                whiteSpace: 'pre-wrap', maxHeight: isError ? 320 : undefined,
+                overflowY: isError ? 'auto' : undefined,
+                color: isError ? '#f87171' : 'var(--text-muted)',
+              }}>
+                {xgbResult}
+              </div>
+            )
+          })()}
 
           {/* Gráfico de precisión XGBoost */}
           {xgbHistory.length >= 2 && (() => {
