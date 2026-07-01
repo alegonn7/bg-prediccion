@@ -320,26 +320,26 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     setXgbResult(null)
     try {
       if (allModels) {
-        const results: string[] = []
-        for (const mn of XGB_MODELS) {
-          setXgbTrainingModel(mn)
-          const res = await fetch('/api/xgb-train', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model_name: mn }),
-          })
-          const json = await res.json()
-          if (json.ok) {
-            const accs = Object.entries(json.buckets ?? {})
+        // Single API call — server fetches price data once and trains all 16 models
+        setXgbResult('Entrenando todos los modelos (descargando datos una sola vez)...')
+        const res = await fetch('/api/xgb-train-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+        const json = await res.json()
+        if (json.ok) {
+          const lines = Object.entries(json.results ?? {}).map(([mn, buckets]: [string, any]) => {
+            if (buckets.error) return `${mn}: error — ${buckets.error}`
+            const accs = Object.entries(buckets)
               .filter(([, v]: any) => !v.skipped)
               .map(([b, v]: any) => `${b}d:${(v.accuracy * 100).toFixed(0)}%`)
               .join(' ')
-            results.push(`${mn}: ${accs || 'entrenado'}`)
-          } else {
-            results.push(`${mn}: error — ${json.error}`)
-          }
+            return `${mn}: ${accs || 'entrenado'}`
+          })
+          setXgbResult(lines.join('\n'))
+        } else {
+          setXgbResult(`Error: ${json.error}`)
         }
-        setXgbResult(results.join('\n'))
       } else {
         const res = await fetch('/api/xgb-train', {
           method: 'POST',
