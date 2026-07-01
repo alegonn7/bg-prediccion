@@ -103,27 +103,37 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
   const fetchLivePrices = useCallback(async () => {
     if (!tickers.length) return
     setLiveLoading(true)
+    // Batch to stay under Finnhub free tier (60 req/min): 10 per batch, 12s between batches
+    const BATCH = 10
+    const DELAY = 12000
     try {
-      const results = await Promise.allSettled(
-        tickers.map(async ticker => {
-          const r = await fetch(
-            `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`
-          )
-          const d = await r.json()
-          return { ticker, price: d.c as number, changePct: d.dp as number | null }
-        })
-      )
-      const now = Date.now()
-      setLivePrices(prev => {
-        const next = { ...prev }
-        for (const r of results) {
-          if (r.status === 'fulfilled' && r.value.price > 0) {
-            next[r.value.ticker] = { price: r.value.price, changePct: r.value.changePct ?? null, fetchedAt: now }
+      for (let i = 0; i < tickers.length; i += BATCH) {
+        const batch = tickers.slice(i, i + BATCH)
+        const results = await Promise.allSettled(
+          batch.map(async ticker => {
+            const r = await fetch(
+              `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`
+            )
+            if (!r.ok) throw new Error(`${r.status}`)
+            const d = await r.json()
+            return { ticker, price: d.c as number, changePct: d.dp as number | null }
+          })
+        )
+        const now = Date.now()
+        setLivePrices(prev => {
+          const next = { ...prev }
+          for (const r of results) {
+            if (r.status === 'fulfilled' && r.value.price > 0) {
+              next[r.value.ticker] = { price: r.value.price, changePct: r.value.changePct ?? null, fetchedAt: now }
+            }
           }
+          return next
+        })
+        if (i + BATCH < tickers.length) {
+          await new Promise(res => setTimeout(res, DELAY))
         }
-        return next
-      })
-      setLastLiveFetch(now)
+      }
+      setLastLiveFetch(Date.now())
     } finally {
       setLiveLoading(false)
     }
