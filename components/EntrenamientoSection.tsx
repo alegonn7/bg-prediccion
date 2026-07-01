@@ -759,6 +759,145 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
       {/* ── HISTORIAL DE CAMBIOS ────────────────────────────── */}
       {activeSection === 'historial' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Sesiones de federación — resumen por run */}
+          {(() => {
+            const runMap = new Map<string, ChangelogEntry[]>()
+            for (const c of changelog) {
+              if (c.trigger === 'initial') continue
+              const key = c.snapshot_at.slice(0, 16)
+              if (!runMap.has(key)) runMap.set(key, [])
+              runMap.get(key)!.push(c)
+            }
+            const runList = [...runMap.entries()].sort(([a], [b]) => b.localeCompare(a)).slice(0, 15)
+            if (runList.length === 0) return null
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-hint)', fontWeight: 600 }}>
+                  Sesiones de federación ({runList.length} últimas)
+                </div>
+                {runList.map(([key, entries]) => {
+                  const trigger = entries[0]?.trigger
+                  const lrEntries = entries.filter(e => e.change_type === 'lr_params' && e.new_accuracy != null && e.old_accuracy != null && e.trigger !== 'initial')
+                  const wEntries  = entries.filter(e => e.change_type === 'weight')
+
+                  // Agrupa por modelo: promedio de old/new accuracy a través de horizontes
+                  const byModel: Record<string, { old: number[]; new: number[] }> = {}
+                  for (const e of lrEntries) {
+                    if (!byModel[e.model_name]) byModel[e.model_name] = { old: [], new: [] }
+                    byModel[e.model_name].old.push(e.old_accuracy!)
+                    byModel[e.model_name].new.push(e.new_accuracy!)
+                  }
+                  const modelDeltas = Object.entries(byModel).map(([mn, v]) => {
+                    const oldAvg = v.old.reduce((a, b) => a + b, 0) / v.old.length
+                    const newAvg = v.new.reduce((a, b) => a + b, 0) / v.new.length
+                    return { model: mn, oldAvg, newAvg, delta: newAvg - oldAvg }
+                  })
+
+                  const hasLR = modelDeltas.length > 0
+                  const overallOld = hasLR ? modelDeltas.reduce((s, m) => s + m.oldAvg, 0) / modelDeltas.length : 0
+                  const overallNew = hasLR ? modelDeltas.reduce((s, m) => s + m.newAvg, 0) / modelDeltas.length : 0
+                  const overallDelta = overallNew - overallOld
+                  const improved  = modelDeltas.filter(m => m.delta >  0.001).length
+                  const degraded  = modelDeltas.filter(m => m.delta < -0.001).length
+                  const topGainers = [...modelDeltas].sort((a, b) => b.delta - a.delta).slice(0, 4).filter(m => m.delta >  0.001)
+                  const topLosers  = [...modelDeltas].sort((a, b) => a.delta - b.delta).slice(0, 2).filter(m => m.delta < -0.001)
+
+                  const dt = new Date(key + ':00')
+                  const dateStr = dt.toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+                  const timeStr = dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+
+                  return (
+                    <div key={key} style={{
+                      background: 'var(--card)', border: '1px solid var(--border)',
+                      borderLeft: `3px solid ${TRIGGER_COLOR[trigger] ?? '#6b7280'}`,
+                      borderRadius: 8, padding: '12px 16px',
+                    }}>
+                      {/* Header de sesión */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: hasLR ? 10 : 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5,
+                            background: (TRIGGER_COLOR[trigger] ?? '#6b7280') + '20',
+                            color: TRIGGER_COLOR[trigger] ?? 'var(--text-hint)',
+                          }}>
+                            {TRIGGER_LABEL[trigger] ?? trigger}
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
+                            {dateStr} · {timeStr}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-hint)', flexShrink: 0 }}>
+                          {hasLR && <span>{modelDeltas.length} modelos LR</span>}
+                          {wEntries.length > 0 && <span>{[...new Set(wEntries.map(e => e.model_name))].length} pesos</span>}
+                        </div>
+                      </div>
+
+                      {/* Precisión global antes → después */}
+                      {hasLR && (
+                        <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', marginBottom: topGainers.length > 0 ? 10 : 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>Precisión LR prom:</span>
+                            <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 13, color: 'var(--text-muted)' }}>
+                              {(overallOld * 100).toFixed(1)}%
+                            </span>
+                            <span style={{ color: 'var(--text-hint)', fontSize: 12 }}>→</span>
+                            <span style={{
+                              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 15, fontWeight: 700,
+                              color: overallDelta > 0.005 ? '#22c55e' : overallDelta < -0.005 ? '#f87171' : 'var(--text)',
+                            }}>
+                              {(overallNew * 100).toFixed(1)}%
+                            </span>
+                            {Math.abs(overallDelta) > 0.001 && (
+                              <span style={{ fontSize: 12, fontWeight: 700, color: overallDelta > 0 ? '#22c55e' : '#f87171' }}>
+                                {overallDelta > 0 ? '▲' : '▼'}{(Math.abs(overallDelta) * 100).toFixed(1)} pp
+                              </span>
+                            )}
+                          </div>
+                          {(improved > 0 || degraded > 0) && (
+                            <div style={{ fontSize: 11 }}>
+                              {improved > 0 && <span style={{ color: '#22c55e' }}>↑ {improved} mejoraron</span>}
+                              {improved > 0 && degraded > 0 && <span style={{ color: 'var(--text-hint)', margin: '0 5px' }}>·</span>}
+                              {degraded > 0 && <span style={{ color: '#f87171' }}>↓ {degraded} bajaron</span>}
+                              {modelDeltas.length - improved - degraded > 0 && (
+                                <span style={{ color: 'var(--text-hint)', marginLeft: 5 }}>· {modelDeltas.length - improved - degraded} sin cambio</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Chips de mejoras / caídas por modelo */}
+                      {(topGainers.length > 0 || topLosers.length > 0) && (
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                          {topGainers.map(m => (
+                            <span key={m.model} style={{
+                              fontSize: 10, padding: '2px 8px', borderRadius: 5,
+                              background: '#22c55e14', color: '#22c55e', border: '1px solid #22c55e30',
+                              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                            }}>
+                              {m.model} {(m.oldAvg * 100).toFixed(0)}%→{(m.newAvg * 100).toFixed(0)}% ▲{(m.delta * 100).toFixed(1)}pp
+                            </span>
+                          ))}
+                          {topLosers.map(m => (
+                            <span key={m.model} style={{
+                              fontSize: 10, padding: '2px 8px', borderRadius: 5,
+                              background: '#f8717114', color: '#f87171', border: '1px solid #f8717130',
+                              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                            }}>
+                              {m.model} {(m.oldAvg * 100).toFixed(0)}%→{(m.newAvg * 100).toFixed(0)}% ▼{(Math.abs(m.delta) * 100).toFixed(1)}pp
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+
           <Card style={{ padding: '14px 20px' }}>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
