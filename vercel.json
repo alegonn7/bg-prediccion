@@ -1,10 +1,1 @@
-{
-  "functions": {
-    "api/train_xgb.py": {
-      "maxDuration": 60
-    },
-    "api/predict_xgb.py": {
-      "maxDuration": 60
-    }
-  }
-}
+{}

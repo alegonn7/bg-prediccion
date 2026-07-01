@@ -6,7 +6,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
 
-  const pythonUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/predict_xgb`
+  const pythonUrl = `${process.env.PYTHON_API_URL ?? 'http://localhost:3001'}/api/predict_xgb`
   const secret = process.env.XGB_INTERNAL_SECRET ?? ''
 
   const resp = await fetch(pythonUrl, {

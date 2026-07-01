@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
 
-  const pythonUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000'}/api/train_xgb`
+  const pythonUrl = `${process.env.PYTHON_API_URL ?? 'http://localhost:3001'}/api/train_xgb`
   const secret = process.env.XGB_INTERNAL_SECRET ?? ''
 
   const resp = await fetch(pythonUrl, {
