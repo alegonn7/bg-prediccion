@@ -264,6 +264,10 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [retraining, setRetraining] = useState(false)
   const [federating, setFederating] = useState(false)
   const [triggerResult, setTriggerResult] = useState<string | null>(null)
+  const [xgbTrainingModel, setXgbTrainingModel] = useState<string | null>(null)
+  const [xgbTrainingAll, setXgbTrainingAll] = useState(false)
+  const [xgbPredicting, setXgbPredicting] = useState(false)
+  const [xgbResult, setXgbResult] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'activos' | 'historial'>('resumen')
   const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
   const [activosPage, setActivosPage] = useState(0)
@@ -300,6 +304,78 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     ...globalWeights.map(g => g.model_name),
     ...backtestModelStats.map(s => s.model_name),
   ])].sort()
+
+  const XGB_MODELS = ['tendencia','momentum','volatilidad','volumen','estructura','elliott','velas','macro','fundamental','sentimiento','regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa']
+
+  async function handleXGBTrain(modelName: string | 'all') {
+    const allModels = modelName === 'all'
+    if (allModels) setXgbTrainingAll(true)
+    else setXgbTrainingModel(modelName)
+    setXgbResult(null)
+    try {
+      if (allModels) {
+        const results: string[] = []
+        for (const mn of XGB_MODELS) {
+          setXgbTrainingModel(mn)
+          const res = await fetch('/api/xgb-train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_name: mn }),
+          })
+          const json = await res.json()
+          if (json.ok) {
+            const accs = Object.entries(json.buckets ?? {})
+              .filter(([, v]: any) => !v.skipped)
+              .map(([b, v]: any) => `${b}d:${(v.accuracy * 100).toFixed(0)}%`)
+              .join(' ')
+            results.push(`${mn}: ${accs || 'entrenado'}`)
+          } else {
+            results.push(`${mn}: error — ${json.error}`)
+          }
+        }
+        setXgbResult(results.join('\n'))
+      } else {
+        const res = await fetch('/api/xgb-train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_name: modelName }),
+        })
+        const json = await res.json()
+        if (json.ok) {
+          const accs = Object.entries(json.buckets ?? {})
+            .filter(([, v]: any) => !v.skipped)
+            .map(([b, v]: any) => `${b}d: ${(v.accuracy * 100).toFixed(1)}% (n=${v.samples})`)
+            .join(' · ')
+          setXgbResult(`${modelName} entrenado: ${accs}`)
+        } else {
+          setXgbResult(`Error: ${json.error}`)
+        }
+      }
+    } catch {
+      setXgbResult('Error de conexión.')
+    } finally {
+      setXgbTrainingModel(null)
+      setXgbTrainingAll(false)
+    }
+  }
+
+  async function handleXGBPredict() {
+    setXgbPredicting(true)
+    setXgbResult(null)
+    try {
+      const res = await fetch('/api/xgb-predict', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      const json = await res.json()
+      if (json.ok) {
+        setXgbResult(`Predicciones generadas: ${json.predictions} para ${json.assets} activos · ${json.models} modelos XGBoost · fecha ${json.date}`)
+      } else {
+        setXgbResult(`Error: ${json.error}`)
+      }
+    } catch {
+      setXgbResult('Error de conexión.')
+    } finally {
+      setXgbPredicting(false)
+    }
+  }
 
   async function handleFederate() {
     setFederating(true)
@@ -452,6 +528,81 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
           <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
             Cron automático: 10 activos/día a las 02:00 UTC · "Reentrenar todo" incluye datos reales acumulados (predicciones cerradas verificadas)
           </div>
+        </div>
+      </Card>
+
+      {/* XGBoost */}
+      <Card>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>XGBoost global</div>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
+                Modelos globales (pooled de todos los activos) · blending 55% LR / 45% XGBoost en predicciones diarias
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => handleXGBTrain('all')}
+                disabled={xgbTrainingAll || xgbTrainingModel !== null || xgbPredicting}
+                style={{
+                  background: xgbTrainingAll ? 'var(--border)' : '#7c3aed',
+                  color: '#fff', border: 'none', borderRadius: 7,
+                  padding: '8px 18px', fontSize: 12, fontWeight: 700,
+                  cursor: (xgbTrainingAll || xgbTrainingModel !== null || xgbPredicting) ? 'default' : 'pointer',
+                  fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                }}
+              >
+                {xgbTrainingAll ? `Entrenando ${xgbTrainingModel ?? ''}…` : 'Entrenar todos (16)'}
+              </button>
+              <button
+                onClick={handleXGBPredict}
+                disabled={xgbPredicting || xgbTrainingAll || xgbTrainingModel !== null}
+                style={{
+                  background: xgbPredicting ? 'var(--border)' : '#0ea5e9',
+                  color: '#fff', border: 'none', borderRadius: 7,
+                  padding: '8px 16px', fontSize: 12, fontWeight: 700,
+                  cursor: (xgbPredicting || xgbTrainingAll || xgbTrainingModel !== null) ? 'default' : 'pointer',
+                  fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                }}
+              >
+                {xgbPredicting ? 'Generando…' : 'Generar predicciones'}
+              </button>
+            </div>
+          </div>
+
+          {/* Grid de modelos individuales */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {XGB_MODELS.map(mn => (
+              <button
+                key={mn}
+                onClick={() => handleXGBTrain(mn)}
+                disabled={xgbTrainingModel !== null || xgbTrainingAll || xgbPredicting}
+                style={{
+                  padding: '4px 10px', fontSize: 11,
+                  background: xgbTrainingModel === mn ? '#7c3aed' : 'var(--bg)',
+                  color: xgbTrainingModel === mn ? '#fff' : 'var(--text-muted)',
+                  border: `1px solid ${xgbTrainingModel === mn ? '#7c3aed' : 'var(--border)'}`,
+                  borderRadius: 6, cursor: (xgbTrainingModel !== null || xgbTrainingAll || xgbPredicting) ? 'default' : 'pointer',
+                  fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                  transition: 'background 0.15s, color 0.15s',
+                }}
+              >
+                {xgbTrainingModel === mn ? '⏳ ' : ''}{mn}
+              </button>
+            ))}
+          </div>
+
+          {xgbResult && (
+            <div style={{
+              fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.8,
+              background: 'var(--bg)', borderRadius: 6, padding: '10px 12px',
+              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              whiteSpace: 'pre-wrap',
+            }}>
+              {xgbResult}
+            </div>
+          )}
         </div>
       </Card>
 
