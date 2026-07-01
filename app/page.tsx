@@ -5,6 +5,17 @@ import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection
 
 export type { ModelLRParam, BacktestModelStat }
 
+export type XgbHistoryEntry = {
+  id: string
+  model_name: string
+  horizon_bucket: number
+  old_accuracy: number | null
+  new_accuracy: number
+  old_samples: number | null
+  new_samples: number
+  trained_at: string
+}
+
 export type ChangelogEntry = {
   id: number
   snapshot_at: string
@@ -154,6 +165,7 @@ async function getData() {
     { data: modelLRParamsRaw },
     { data: backtestStatsRaw },
     { data: changelogRaw },
+    { data: xgbHistoryRaw },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -221,6 +233,12 @@ async function getData() {
       .select('id, snapshot_at, model_name, horizon_bucket, change_type, trigger, old_samples, new_samples, old_accuracy, new_accuracy, old_weight, new_weight, old_dir_accuracy, new_dir_accuracy, max_coeff_delta, top_changed_feature, feature_names, summary')
       .order('snapshot_at', { ascending: false })
       .limit(200),
+
+    supabase
+      .from('xgb_training_history')
+      .select('id, model_name, horizon_bucket, old_accuracy, new_accuracy, old_samples, new_samples, trained_at')
+      .order('trained_at', { ascending: false })
+      .limit(300),
   ])
 
   // Attach current prices to open predictions
@@ -301,6 +319,7 @@ async function getData() {
     modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
     backtestModelStats,
     changelog: (changelogRaw ?? []) as ChangelogEntry[],
+    xgbHistory: (xgbHistoryRaw ?? []) as XgbHistoryEntry[],
   }
 }
 
@@ -311,7 +330,7 @@ export default async function Dashboard() {
     open, closed, modelWeights, hits, total, assets,
     openPredsSummary, modelDetailStats,
     backtestRuns, horizonWeights,
-    modelLRParams, backtestModelStats, changelog,
+    modelLRParams, backtestModelStats, changelog, xgbHistory,
   } = await getData()
   return (
     <DashboardClient
@@ -328,6 +347,7 @@ export default async function Dashboard() {
       modelLRParams={modelLRParams}
       backtestModelStats={backtestModelStats}
       changelog={changelog}
+      xgbHistory={xgbHistory}
     />
   )
 }

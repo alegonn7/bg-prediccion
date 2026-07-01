@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import type { BacktestModelStat } from './ModelsSection'
-import type { ChangelogEntry } from '@/app/page'
+import type { ChangelogEntry, XgbHistoryEntry } from '@/app/page'
 
 export type BacktestRun = {
   ticker: string
@@ -28,6 +28,7 @@ type Props = {
   globalWeights: { model_name: string; weight: number; direction_accuracy: number | null; sample_size: number }[]
   backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
+  xgbHistory: XgbHistoryEntry[]
 }
 
 const BUCKETS = [7, 14, 30, 60, 90]
@@ -258,7 +259,7 @@ function ChangelogCard({ entry }: { entry: ChangelogEntry }) {
   )
 }
 
-export function EntrenamientoSection({ runs, horizonWeights, globalWeights, backtestModelStats, changelog }: Props) {
+export function EntrenamientoSection({ runs, horizonWeights, globalWeights, backtestModelStats, changelog, xgbHistory }: Props) {
   const [triggering, setTriggering] = useState(false)
   const [trainingAll, setTrainingAll] = useState(false)
   const [retraining, setRetraining] = useState(false)
@@ -268,6 +269,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [xgbTrainingAll, setXgbTrainingAll] = useState(false)
   const [xgbPredicting, setXgbPredicting] = useState(false)
   const [xgbResult, setXgbResult] = useState<string | null>(null)
+  const [showXgbHistory, setShowXgbHistory] = useState(false)
   const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'activos' | 'historial'>('resumen')
   const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
   const [activosPage, setActivosPage] = useState(0)
@@ -603,6 +605,98 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               {xgbResult}
             </div>
           )}
+
+          {/* Historial de entrenamientos XGBoost */}
+          {xgbHistory.length > 0 && (() => {
+            const runMap = new Map<string, XgbHistoryEntry[]>()
+            for (const e of xgbHistory) {
+              const key = e.trained_at.slice(0, 16)
+              if (!runMap.has(key)) runMap.set(key, [])
+              runMap.get(key)!.push(e)
+            }
+            const runList = [...runMap.entries()].sort(([a], [b]) => b.localeCompare(a)).slice(0, 12)
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <button
+                    onClick={() => setShowXgbHistory(s => !s)}
+                    style={{
+                      fontSize: 11, color: 'var(--text-hint)', background: 'none', border: 'none',
+                      cursor: 'pointer', padding: 0, textDecoration: 'underline',
+                    }}
+                  >
+                    {showXgbHistory ? '▲ Ocultar' : '▼ Ver'} historial XGBoost ({runList.length} sesiones · {xgbHistory.length} registros)
+                  </button>
+                </div>
+                {showXgbHistory && runList.map(([key, entries]) => {
+                  const byModel: Record<string, XgbHistoryEntry[]> = {}
+                  for (const e of entries) {
+                    if (!byModel[e.model_name]) byModel[e.model_name] = []
+                    byModel[e.model_name].push(e)
+                  }
+                  const withDelta = entries.filter(e => e.old_accuracy != null)
+                  const avgOld = withDelta.length ? withDelta.reduce((s, e) => s + e.old_accuracy!, 0) / withDelta.length : null
+                  const avgNew = entries.reduce((s, e) => s + e.new_accuracy, 0) / entries.length
+                  const delta = avgOld != null ? avgNew - avgOld : null
+                  const dt = new Date(key + ':00')
+                  const dateStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+                  const timeStr = dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+                  return (
+                    <div key={key} style={{
+                      background: 'var(--bg)', borderRadius: 8, padding: '10px 14px',
+                      border: '1px solid var(--border)', borderLeft: '3px solid #7c3aed',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
+                            {dateStr} · {timeStr}
+                          </span>
+                          <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>
+                            {Object.keys(byModel).length} modelos · {entries.length} buckets
+                          </span>
+                          {delta != null && (
+                            <span style={{ fontSize: 12, fontWeight: 700, color: delta > 0 ? '#22c55e' : delta < -0.001 ? '#f87171' : 'var(--text-hint)' }}>
+                              {delta > 0 ? '▲' : '▼'}{(Math.abs(delta) * 100).toFixed(2)} pp promedio acc
+                            </span>
+                          )}
+                          {avgOld == null && (
+                            <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>Primer entrenamiento</span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: 10, color: 'var(--text-hint)' }}>
+                          acc prom: {(avgNew * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {Object.entries(byModel).map(([mn, mes]) => {
+                          const validOld = mes.filter(e => e.old_accuracy != null)
+                          const avgOldM = validOld.length ? validOld.reduce((s, e) => s + e.old_accuracy!, 0) / validOld.length : null
+                          const avgNewM = mes.reduce((s, e) => s + e.new_accuracy, 0) / mes.length
+                          const d = avgOldM != null ? avgNewM - avgOldM : null
+                          const positive = d != null && d > 0.005
+                          const negative = d != null && d < -0.005
+                          return (
+                            <span key={mn} style={{
+                              fontSize: 10, padding: '2px 7px', borderRadius: 4,
+                              background: positive ? '#22c55e18' : negative ? '#f8717118' : 'var(--bg)',
+                              color: positive ? '#22c55e' : negative ? '#f87171' : 'var(--text-hint)',
+                              border: `1px solid ${positive ? '#22c55e40' : negative ? '#f8717140' : 'var(--border)'}`,
+                              fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                            }}>
+                              {mn}
+                              {d != null
+                                ? ` ${d > 0 ? '+' : ''}${(d * 100).toFixed(1)}pp`
+                                : ` ${(avgNewM * 100).toFixed(0)}%`}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
       </Card>
 
