@@ -170,8 +170,17 @@ function AssetSelector({ onSave }: { onSave: () => void }) {
 }
 
 // ── Filters ────────────────────────────────────────────────────────────────────
-type TabView = 'open' | 'closed' | 'analysis'
+type TabView = 'open' | 'closed' | 'analysis' | 'modelos'
 interface Filters { ticker: string; direction: '' | 'up' | 'down' | 'neutral'; horizon: '' | '60' | '120' | '240' }
+
+interface ModelWeightIntraday {
+  model_name: string
+  weight: number
+  direction_accuracy: number | null
+  sample_size: number
+  mae_avg: number | null
+  last_updated: string
+}
 
 function FiltersBar({ filters, onChange }: { filters: Filters; onChange: (f: Filters) => void }) {
   const inp: React.CSSProperties = { background:'var(--card)', border:'1px solid var(--border)', borderRadius:6, padding:'5px 10px', fontSize:12, color:'var(--text)', outline:'none' }
@@ -635,8 +644,10 @@ export function IntradaySectionClient() {
   const [open, setOpen]           = useState<IntraConsensus[]>([])
   const [closed, setClosed]       = useState<IntraConsensus[]>([])
   const [modelPreds, setModelPreds] = useState<ModelPred[]>([])
+  const [modelWeights, setModelWeights] = useState<ModelWeightIntraday[]>([])
   const [loading, setLoading]     = useState(true)
   const [triggering, setTriggering] = useState(false)
+  const [recalculating, setRecalculating] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [showConfig, setShowConfig]   = useState(false)
   const [tab, setTab]             = useState<TabView>('open')
@@ -645,7 +656,7 @@ export function IntradaySectionClient() {
   const marketOpen = isMarketOpen()
 
   const load = useCallback(async () => {
-    const [{ data: openData }, { data: closedData }, { data: mpData }] = await Promise.all([
+    const [{ data: openData }, { data: closedData }, { data: mpData }, { data: weightsData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
         .select('*, assets(ticker, name)').eq('status','open')
         .order('created_at', { ascending: false }).limit(500),
@@ -655,15 +666,26 @@ export function IntradaySectionClient() {
       supabase.from('model_predictions_intraday')
         .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, assets!asset_id(ticker)')
         .eq('status','closed').not('direction_correct','is',null).limit(5000),
+      supabase.from('model_weights_intraday')
+        .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
+        .order('direction_accuracy', { ascending: false, nullsFirst: false }),
     ])
     setOpen((openData ?? []) as IntraConsensus[])
     setClosed((closedData ?? []) as IntraConsensus[])
     setModelPreds((mpData ?? []) as unknown as ModelPred[])
+    setModelWeights((weightsData ?? []) as ModelWeightIntraday[])
     setLastRefresh(new Date()); setLoading(false)
   }, [])
 
   useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id) }, [load])
   useEffect(() => setPage(0), [filters, tab])
+
+  async function recalcWeights() {
+    setRecalculating(true)
+    await callFn('juez-intraday', {})
+    await load()
+    setRecalculating(false)
+  }
 
   async function triggerNow() {
     setTriggering(true); await callFn('crear-prediccion-intraday', {}); await load(); setTriggering(false)
@@ -735,11 +757,119 @@ export function IntradaySectionClient() {
               <button onClick={() => setTab('open')} style={tabBtn('open')}>Activas ({open.length})</button>
               <button onClick={() => setTab('closed')} style={tabBtn('closed')}>Cerradas ({closed.length})</button>
               <button onClick={() => setTab('analysis')} style={tabBtn('analysis')}>Análisis</button>
+              <button onClick={() => setTab('modelos')} style={tabBtn('modelos')}>Modelos ({modelWeights.length})</button>
             </div>
-            {tab !== 'analysis' && <FiltersBar filters={filters} onChange={setFilters} />}
+            {tab !== 'analysis' && tab !== 'modelos' && <FiltersBar filters={filters} onChange={setFilters} />}
           </div>
 
           {tab === 'analysis' && <IntradayAnalysis closedPreds={closed} modelPreds={modelPreds} />}
+
+          {tab === 'modelos' && (
+            <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+              {/* Explanation card */}
+              <div style={card()}>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Aprendizaje automático de pesos intraday</div>
+                <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7, marginBottom:12 }}>
+                  Cada vez que <b>juez-intraday</b> evalúa predicciones vencidas (cada 5 min en horario de mercado),
+                  recalcula los pesos de los 13 modelos basándose en las últimas 500 predicciones cerradas.
+                  Los modelos más precisos reciben mayor peso en el consenso.
+                  <br /><span style={{ color:'var(--text-hint)' }}>
+                    Fórmula: peso = max(0.1, min(3.0, 1.0 + (accuracy − 0.5) × 4))
+                  </span>
+                </div>
+                <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                  <button
+                    onClick={recalcWeights}
+                    disabled={recalculating}
+                    style={{
+                      background: recalculating ? 'var(--border)' : '#7c3aed', color:'#fff',
+                      border:'none', borderRadius:7, padding:'8px 18px', fontSize:12, fontWeight:700,
+                      cursor: recalculating ? 'default' : 'pointer',
+                    }}
+                  >
+                    {recalculating ? 'Recalculando...' : 'Forzar recálculo de pesos'}
+                  </button>
+                  <span style={{ fontSize:11, color:'var(--text-hint)' }}>
+                    Cierra predicciones vencidas y actualiza pesos inmediatamente
+                  </span>
+                </div>
+              </div>
+
+              {/* Weights table */}
+              {modelWeights.length > 0 ? (
+                <div style={card({ padding:0, overflow:'hidden' })}>
+                  <div style={{ padding:'14px 20px 12px' }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>Pesos actuales por modelo</div>
+                    {modelWeights[0]?.last_updated && (
+                      <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:3 }}>
+                        Último cálculo: {new Date(modelWeights[0].last_updated).toLocaleString('es-AR')}
+                        · basado en {modelWeights[0].sample_size} predicciones
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                      <thead>
+                        <tr>
+                          {['#','Modelo','Peso','Precisión','Muestras','MAE medio','Barra precisión'].map((h, i) => (
+                            <th key={h} style={{ ...th, textAlign: i <= 1 ? 'left' : 'center' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...modelWeights].sort((a, b) => (b.direction_accuracy ?? 0) - (a.direction_accuracy ?? 0)).map((w, i) => {
+                          const wNum = Number(w.weight)
+                          const acc  = w.direction_accuracy != null ? Number(w.direction_accuracy) : null
+                          const wColor = wNum > 1.3 ? '#22c55e' : wNum < 0.7 ? '#ef4444' : 'var(--text)'
+                          return (
+                            <tr key={w.model_name} style={{ borderBottom:'1px solid var(--border)' }}>
+                              <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
+                              <td style={td({ fontWeight:700, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>{w.model_name}</td>
+                              <td style={td({ textAlign:'center', fontWeight:700, color: wColor, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
+                                {wNum.toFixed(3)}
+                              </td>
+                              <td style={td({ textAlign:'center', fontWeight:700, color: accColor(acc) })}>
+                                {acc != null ? `${(acc * 100).toFixed(1)}%` : '—'}
+                              </td>
+                              <td style={td({ textAlign:'center', color:'var(--text-muted)' })}>{w.sample_size}</td>
+                              <td style={td({ textAlign:'center', color:'var(--text-muted)', fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
+                                {w.mae_avg != null ? `${Number(w.mae_avg).toFixed(3)}%` : '—'}
+                              </td>
+                              <td style={td({ minWidth:120 })}>
+                                <MiniBar pct={acc ?? 0} color={acc != null && acc >= 0.6 ? '#22c55e' : acc != null && acc < 0.4 ? '#ef4444' : '#f59e0b'} />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div style={card({ textAlign:'center', padding:'40px 24px' })}>
+                  <p style={{ color:'var(--text-muted)', margin:0 }}>
+                    Pesos aún no calculados. Se calcularán automáticamente cuando se cierren las primeras predicciones.
+                  </p>
+                </div>
+              )}
+
+              {/* ML training note */}
+              <div style={card({ background:'var(--bg)', border:'1px dashed var(--border)' })}>
+                <div style={{ fontSize:12, fontWeight:600, marginBottom:6, color:'var(--text-muted)' }}>
+                  Entrenamiento ML intraday (próximamente)
+                </div>
+                <div style={{ fontSize:12, color:'var(--text-hint)', lineHeight:1.7 }}>
+                  Para entrenar modelos LR/XGBoost intradiarios (como el sistema diario), se necesitan mínimo 30 días de datos de velas históricas.
+                  Actualmente el sistema acumula ~{Math.round(9122 / 92)} velas/activo.
+                  Los modelos ML reemplazarían las fórmulas de score actuales con predicciones aprendidas de datos históricos.
+                  <br />
+                  <span style={{ color:'var(--text-hint)', fontWeight:600 }}>
+                    Mientras tanto, el sistema ya aprende en tiempo real a través de los pesos adaptativos.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {tab !== 'analysis' && filtered.length === 0 && (
             <div style={{ ...card(), textAlign:'center', padding:'40px 24px' }}>
