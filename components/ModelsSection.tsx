@@ -325,36 +325,6 @@ function ModelCard({
         </p>
       </div>
 
-      {/* Backtest accuracy by horizon */}
-      {Object.keys(bsByBucket).length > 0 && (
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 8 }}>
-            Backtest direccional por horizonte
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {BUCKETS.map(b => {
-              const bs = bsByBucket[b]
-              if (!bs) return null
-              const pct = bs.pct
-              return (
-                <div key={b} style={{
-                  background: accBg(pct), border: `1px solid ${accColor(pct)}44`,
-                  borderRadius: 8, padding: '6px 10px', textAlign: 'center', minWidth: 52,
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: accColor(pct), fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
-                    {(pct * 100).toFixed(1)}%
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 1 }}>{b}d</div>
-                  <div style={{ fontSize: 9, color: 'var(--text-hint)' }}>
-                    MAE {(bs.mae_avg * 100).toFixed(1)}%
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Feature list */}
       <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 8 }}>

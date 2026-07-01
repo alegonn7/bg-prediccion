@@ -264,8 +264,12 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [retraining, setRetraining] = useState(false)
   const [federating, setFederating] = useState(false)
   const [triggerResult, setTriggerResult] = useState<string | null>(null)
-  const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'pesos' | 'activos' | 'historial'>('resumen')
+  const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'activos' | 'historial'>('resumen')
   const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
+  const [activosPage, setActivosPage] = useState(0)
+  const [activosFilter, setActivosFilter] = useState<'all' | 'done' | 'running' | 'pending' | 'error'>('all')
+  const [historialPage, setHistorialPage] = useState(0)
+  const [historialModelSearch, setHistorialModelSearch] = useState('')
 
   const done    = runs.filter(r => r.status === 'done').length
   const running = runs.filter(r => r.status === 'running').length
@@ -352,7 +356,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     }
   }
 
-  function sectionBtn(id: typeof activeSection, label: string) {
+  function sectionBtn(id: 'resumen' | 'rendimiento' | 'activos' | 'historial', label: string) {
     const on = activeSection === id
     return (
       <button
@@ -480,8 +484,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
       {/* Section nav */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {sectionBtn('resumen', 'Arquitectura')}
-        {sectionBtn('rendimiento', 'Rendimiento Backtest')}
-        {sectionBtn('pesos', 'Pesos Federados')}
+        {sectionBtn('rendimiento', 'Rendimiento y Pesos')}
         {sectionBtn('activos', 'Estado por Activo')}
         {sectionBtn('historial', `Historial de Cambios (${changelog.filter(c => c.trigger !== 'initial').length})`)}
       </div>
@@ -608,6 +611,58 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
             MAE% = error absoluto medio del retorno predicho vs real ·
             Datos: {backtestModelStats.reduce((s, r) => s + r.total, 0).toLocaleString()} evaluaciones totales en {done} activos
           </div>
+
+          {/* ── Pesos federados (merged) ── */}
+          <Card style={{ padding: '14px 20px' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7, marginBottom: 12 }}>
+              <b>Pesos federados:</b> ajustan el voto de cada modelo en el consenso final via Brier Skill Score por horizonte.
+              Peso &gt; 1.0 = modelo por encima del promedio · Peso &lt; 1.0 = modelo penalizado.
+            </div>
+            {horizonWeights.length > 0 ? (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-hint)', fontWeight: 500 }}>Modelo</th>
+                      <th style={{ textAlign: 'center', padding: '8px 8px', color: 'var(--text-hint)', fontWeight: 500 }}>Global</th>
+                      {BUCKETS.map(b => (
+                        <th key={b} style={{ textAlign: 'center', padding: '8px 8px', color: 'var(--text-hint)', fontWeight: 500 }}>{b}d</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modelNames.map(mn => {
+                      const gw = gwMap[mn] ?? 1.0
+                      return (
+                        <tr key={mn} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '7px 12px', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: 'var(--text-muted)' }}>
+                            {mn}
+                          </td>
+                          <td style={{ textAlign: 'center', padding: '7px 8px' }}>
+                            <WeightCell w={gw} />
+                          </td>
+                          {BUCKETS.map(b => {
+                            const hw = hwMap[mn]?.[b]
+                            return (
+                              <td key={b} style={{ textAlign: 'center', padding: '7px 8px' }}>
+                                {hw
+                                  ? <WeightCell w={hw.weight} n={hw.sample_size} acc={hw.direction_accuracy} />
+                                  : <span style={{ color: 'var(--text-hint)' }}>—</span>}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-hint)', fontSize: 13 }}>
+                Sin pesos calculados aún.
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
@@ -619,122 +674,87 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
         </Card>
       )}
 
-      {/* ── PESOS FEDERADOS ─────────────────────────────────── */}
-      {activeSection === 'pesos' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card style={{ padding: '14px 20px' }}>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.7 }}>
-              Los <b>pesos federados</b> ajustan el voto de cada modelo en el consenso final. Se calculan via Brier Skill Score
-              (cuánto mejor que predicción aleatoria) por horizonte. Peso &gt; 1.0 = modelo por encima del promedio.
-              Peso &lt; 1.0 = modelo penalizado. Se actualizan automáticamente tras cada backtest.
-            </div>
-          </Card>
-
-          {horizonWeights.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-hint)', fontWeight: 500 }}>Modelo</th>
-                    <th style={{ textAlign: 'center', padding: '8px 8px', color: 'var(--text-hint)', fontWeight: 500 }}>Global</th>
-                    {BUCKETS.map(b => (
-                      <th key={b} style={{ textAlign: 'center', padding: '8px 8px', color: 'var(--text-hint)', fontWeight: 500 }}>{b}d</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {modelNames.map(mn => {
-                    const gw = gwMap[mn] ?? 1.0
-                    return (
-                      <tr key={mn} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '7px 12px', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: 'var(--text-muted)' }}>
-                          {mn}
-                        </td>
-                        <td style={{ textAlign: 'center', padding: '7px 8px' }}>
-                          <WeightCell w={gw} />
-                        </td>
-                        {BUCKETS.map(b => {
-                          const hw = hwMap[mn]?.[b]
-                          return (
-                            <td key={b} style={{ textAlign: 'center', padding: '7px 8px' }}>
-                              {hw
-                                ? <WeightCell w={hw.weight} n={hw.sample_size} acc={hw.direction_accuracy} />
-                                : <span style={{ color: 'var(--text-hint)' }}>—</span>}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <Card>
-              <div style={{ textAlign: 'center', padding: '30px 0', color: 'var(--text-hint)', fontSize: 13 }}>
-                Sin pesos calculados aún.
-              </div>
-            </Card>
-          )}
-        </div>
-      )}
-
       {/* ── ESTADO POR ACTIVO ───────────────────────────────── */}
-      {activeSection === 'activos' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {runs.length > 0 ? (
-            <div style={{ overflowX: 'auto', maxHeight: 500, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead style={{ position: 'sticky', top: 0, background: 'var(--card)', zIndex: 1 }}>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    {['Ticker', 'Estado', 'Fechas', 'Evaluaciones', 'Error', 'Completado'].map(h => (
-                      <th key={h} style={{ textAlign: 'left', padding: '8px 10px', color: 'var(--text-hint)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...runs].sort((a, b) => {
-                    const order: Record<string, number> = { error: 0, running: 1, pending: 2, done: 3 }
-                    return (order[a.status] ?? 9) - (order[b.status] ?? 9)
-                  }).map(r => (
-                    <tr key={r.ticker} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '6px 10px', fontWeight: 700, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>{r.ticker}</td>
-                      <td style={{ padding: '6px 10px' }}>
-                        <span style={{
-                          color: STATUS_COLOR[r.status] ?? 'var(--text-muted)',
-                          fontWeight: 600, textTransform: 'uppercase', fontSize: 11,
-                        }}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
-                        {r.dates_processed?.toLocaleString() ?? '—'}
-                      </td>
-                      <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
-                        {r.predictions_evaluated?.toLocaleString() ?? '—'}
-                      </td>
-                      <td style={{ padding: '6px 10px', color: '#ef4444', fontSize: 11, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.error_msg ?? ''}
-                      </td>
-                      <td style={{ padding: '6px 10px', color: 'var(--text-hint)', fontSize: 11 }}>
-                        {r.completed_at
-                          ? new Date(r.completed_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {activeSection === 'activos' && (() => {
+        const ACTIVOS_PAGE_SIZE = 15
+        const sortedRuns = [...runs].sort((a, b) => {
+          const order: Record<string, number> = { error: 0, running: 1, pending: 2, done: 3 }
+          return (order[a.status] ?? 9) - (order[b.status] ?? 9)
+        })
+        const filteredRuns = activosFilter === 'all' ? sortedRuns : sortedRuns.filter(r => r.status === activosFilter)
+        const totalPages = Math.ceil(filteredRuns.length / ACTIVOS_PAGE_SIZE)
+        const pageRuns = filteredRuns.slice(activosPage * ACTIVOS_PAGE_SIZE, (activosPage + 1) * ACTIVOS_PAGE_SIZE)
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {(['all', 'done', 'running', 'pending', 'error'] as const).map(f => (
+                <button key={f} onClick={() => { setActivosFilter(f); setActivosPage(0) }} style={{
+                  padding: '5px 12px', fontSize: 11, fontWeight: activosFilter === f ? 700 : 400,
+                  background: activosFilter === f ? 'var(--text)' : 'var(--card)',
+                  color: activosFilter === f ? 'var(--bg)' : 'var(--text-muted)',
+                  border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+                }}>
+                  {f === 'all' ? `Todos (${runs.length})` : `${f} (${runs.filter(r => r.status === f).length})`}
+                </button>
+              ))}
             </div>
-          ) : (
-            <Card>
-              <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-hint)', fontSize: 14 }}>
-                Ningún activo entrenado aún. Disparar el primer lote para comenzar.
-              </div>
-            </Card>
-          )}
-        </div>
-      )}
+            {runs.length > 0 ? (
+              <>
+                <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead style={{ background: 'var(--card)' }}>
+                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                        {['Ticker', 'Estado', 'Fechas', 'Evaluaciones', 'Error', 'Completado'].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '8px 10px', color: 'var(--text-hint)', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageRuns.map(r => (
+                        <tr key={r.ticker} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '6px 10px', fontWeight: 700, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>{r.ticker}</td>
+                          <td style={{ padding: '6px 10px' }}>
+                            <span style={{ color: STATUS_COLOR[r.status] ?? 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', fontSize: 11 }}>
+                              {r.status}
+                            </span>
+                          </td>
+                          <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
+                            {r.dates_processed?.toLocaleString() ?? '—'}
+                          </td>
+                          <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>
+                            {r.predictions_evaluated?.toLocaleString() ?? '—'}
+                          </td>
+                          <td style={{ padding: '6px 10px', color: '#ef4444', fontSize: 11, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {r.error_msg ?? ''}
+                          </td>
+                          <td style={{ padding: '6px 10px', color: 'var(--text-hint)', fontSize: 11 }}>
+                            {r.completed_at
+                              ? new Date(r.completed_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {totalPages > 1 && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
+                    <button onClick={() => setActivosPage(p => Math.max(0, p - 1))} disabled={activosPage === 0} style={{ padding: '4px 12px', fontSize: 12, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, cursor: activosPage === 0 ? 'default' : 'pointer', color: activosPage === 0 ? 'var(--text-hint)' : 'var(--text)' }}>←</button>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{activosPage + 1} / {totalPages} · {filteredRuns.length} activos</span>
+                    <button onClick={() => setActivosPage(p => Math.min(totalPages - 1, p + 1))} disabled={activosPage >= totalPages - 1} style={{ padding: '4px 12px', fontSize: 12, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, cursor: activosPage >= totalPages - 1 ? 'default' : 'pointer', color: activosPage >= totalPages - 1 ? 'var(--text-hint)' : 'var(--text)' }}>→</button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <Card>
+                <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-hint)', fontSize: 14 }}>
+                  Ningún activo entrenado aún. Disparar el primer lote para comenzar.
+                </div>
+              </Card>
+            )}
+          </div>
+        )
+      })()}
 
       {/* ── HISTORIAL DE CAMBIOS ────────────────────────────── */}
       {activeSection === 'historial' && (
@@ -754,7 +774,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
                 ] as const).map(({ id, label }) => (
                   <button
                     key={id}
-                    onClick={() => setChangelogFilter(id)}
+                    onClick={() => { setChangelogFilter(id); setHistorialPage(0) }}
                     style={{
                       padding: '5px 12px', fontSize: 11, fontWeight: changelogFilter === id ? 700 : 400,
                       background: changelogFilter === id ? 'var(--text)' : 'var(--card)',
@@ -779,28 +799,50 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
             <span>· Borde azul = params LR · Borde ámbar = peso Brier</span>
           </div>
 
+          {/* Model search */}
+          <div>
+            <input
+              type="text"
+              placeholder="Filtrar por modelo..."
+              value={historialModelSearch}
+              onChange={e => { setHistorialModelSearch(e.target.value); setHistorialPage(0) }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                padding: '7px 12px', fontSize: 12,
+                background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 7,
+                color: 'var(--text)', outline: 'none',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+              }}
+            />
+          </div>
+
           {(() => {
+            const HIST_PAGE_SIZE = 20
             const filtered = changelog.filter(c => {
-              if (changelogFilter === 'changes') return c.trigger !== 'initial'
-              if (changelogFilter === 'lr_params') return c.change_type === 'lr_params'
-              if (changelogFilter === 'weight') return c.change_type === 'weight'
+              if (changelogFilter === 'changes' && c.trigger === 'initial') return false
+              if (changelogFilter === 'lr_params' && c.change_type !== 'lr_params') return false
+              if (changelogFilter === 'weight' && c.change_type !== 'weight') return false
+              if (historialModelSearch && !c.model_name.includes(historialModelSearch.toLowerCase())) return false
               return true
             })
             if (filtered.length === 0) {
               return (
                 <Card>
                   <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-hint)', fontSize: 13 }}>
-                    {changelogFilter === 'changes'
+                    {changelogFilter === 'changes' && !historialModelSearch
                       ? 'Sin cambios registrados aún. Hacé clic en "Federar modelos y calcular cambios" después de un reentrenamiento.'
                       : 'Sin entradas para este filtro.'}
                   </div>
                 </Card>
               )
             }
+            const totalPages = Math.ceil(filtered.length / HIST_PAGE_SIZE)
+            const safePage = Math.min(historialPage, totalPages - 1)
+            const pageEntries = filtered.slice(safePage * HIST_PAGE_SIZE, (safePage + 1) * HIST_PAGE_SIZE)
             let lastDate = ''
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {filtered.map(entry => {
+                {pageEntries.map(entry => {
                   const d = new Date(entry.snapshot_at).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
                   const showDate = d !== lastDate
                   lastDate = d
@@ -820,8 +862,15 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
                     </div>
                   )
                 })}
-                <div style={{ fontSize: 11, color: 'var(--text-hint)', textAlign: 'center', paddingTop: 8 }}>
-                  {filtered.length} entradas · Las entradas se conservan indefinidamente
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center', paddingTop: 8 }}>
+                  {totalPages > 1 && (
+                    <>
+                      <button onClick={() => setHistorialPage(p => Math.max(0, p - 1))} disabled={safePage === 0} style={{ padding: '4px 12px', fontSize: 12, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, cursor: safePage === 0 ? 'default' : 'pointer', color: safePage === 0 ? 'var(--text-hint)' : 'var(--text)' }}>←</button>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{safePage + 1} / {totalPages}</span>
+                      <button onClick={() => setHistorialPage(p => Math.min(totalPages - 1, p + 1))} disabled={safePage >= totalPages - 1} style={{ padding: '4px 12px', fontSize: 12, background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, cursor: safePage >= totalPages - 1 ? 'default' : 'pointer', color: safePage >= totalPages - 1 ? 'var(--text-hint)' : 'var(--text)' }}>→</button>
+                    </>
+                  )}
+                  <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{filtered.length} entradas</span>
                 </div>
               </div>
             )

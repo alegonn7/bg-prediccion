@@ -124,65 +124,6 @@ export function ScorecardSection({ modelWeights, hits, total }: { modelWeights: 
         </div>
       </div>
 
-      {/* Model leaderboard */}
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
-        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'baseline', gap: 12 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Ranking de modelos</span>
-          <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>ordenado por precisión de dirección</span>
-        </div>
-        {!hasWeights ? (
-          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
-            Sin datos suficientes aún — el juez actualizará los pesos cuando haya predicciones cerradas.
-          </div>
-        ) : (
-          <div>
-            {modelWeights.map((m, i) => {
-              const acc = m.direction_accuracy != null ? Math.round(m.direction_accuracy * 100) : null
-              const hasSamples = (m.sample_size ?? 0) >= 5
-              const color = acc != null && acc >= 60 ? 'var(--up)' : acc != null && acc < 50 ? 'var(--down)' : 'var(--text)'
-              return (
-                <div key={m.model_name} style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1.4fr 1fr 1fr 0.7fr',
-                  gap: 16,
-                  padding: '14px 24px',
-                  borderBottom: i < modelWeights.length - 1 ? '1px solid var(--border)' : undefined,
-                  alignItems: 'center',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', minWidth: 18 }}>#{i + 1}</span>
-                    <span style={{ fontSize: 14, fontWeight: 500 }}>{MODEL_LABELS[m.model_name] ?? m.model_name}</span>
-                  </div>
-                  <div>
-                    {hasSamples ? (
-                      <>
-                        <div style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color }}>{acc}%</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>acierto dirección</div>
-                      </>
-                    ) : (
-                      <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>sin datos</span>
-                    )}
-                  </div>
-                  <div>
-                    {m.mae_avg != null ? (
-                      <>
-                        <div style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-muted)' }}>{(m.mae_avg * 100).toFixed(2)}%</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>MAE promedio</div>
-                      </>
-                    ) : (
-                      <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>—</span>
-                    )}
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-muted)' }}>×{m.weight?.toFixed(2) ?? '1.00'}</span>
-                    <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 2 }}>peso</div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </section>
   )
 }
