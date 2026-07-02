@@ -37,6 +37,16 @@ interface ModelPred {
   assets: { ticker: string } | null
 }
 
+interface LRParam {
+  model_name: string
+  horizon_minutes: number
+  train_samples: number
+  train_accuracy: number
+  coefficients: number[]
+  feature_names: string[]
+  last_updated: string
+}
+
 function isMarketOpen(): boolean {
   const now  = new Date()
   const mins = now.getUTCHours() * 60 + now.getUTCMinutes()
@@ -639,6 +649,160 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
   )
 }
 
+// ── LR Results Panel ───────────────────────────────────────────────────────────
+function LRResultsPanel({ params }: { params: LRParam[] }) {
+  const models   = [...new Set(params.map(p => p.model_name))].sort()
+  const horizons = [60, 120, 240]
+
+  const grid = new Map<string, Map<number, LRParam>>()
+  for (const p of params) {
+    if (!grid.has(p.model_name)) grid.set(p.model_name, new Map())
+    grid.get(p.model_name)!.set(p.horizon_minutes, p)
+  }
+
+  function cellBg(acc: number | null) {
+    if (acc == null) return 'transparent'
+    if (acc >= 0.65) return '#15803d28'
+    if (acc >= 0.55) return '#22c55e14'
+    if (acc >= 0.50) return '#f59e0b14'
+    return '#ef444414'
+  }
+  function cellCol(acc: number | null) {
+    if (acc == null) return 'var(--text-hint)'
+    if (acc >= 0.60) return '#22c55e'
+    if (acc >= 0.50) return '#f59e0b'
+    return '#ef4444'
+  }
+
+  // Feature importance: average |coeff| across all model×horizon combos
+  const featureWeights = new Map<string, number[]>()
+  for (const p of params) {
+    if (!p.feature_names || !p.coefficients) continue
+    p.feature_names.forEach((fn, i) => {
+      if (!featureWeights.has(fn)) featureWeights.set(fn, [])
+      featureWeights.get(fn)!.push(Math.abs(p.coefficients[i] ?? 0))
+    })
+  }
+  const avgFeatures = [...featureWeights.entries()]
+    .map(([name, vals]) => ({ name, avg: vals.reduce((s, v) => s + v, 0) / vals.length }))
+    .sort((a, b) => b.avg - a.avg)
+    .slice(0, 12)
+  const maxAvg = avgFeatures[0]?.avg ?? 1
+
+  const lastTrained = params.length > 0
+    ? new Date(Math.max(...params.map(p => new Date(p.last_updated).getTime()))).toLocaleString('es-AR')
+    : null
+
+  if (params.length === 0) return null
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+
+      {/* Accuracy heatmap grid */}
+      <div style={card({ padding:0, overflow:'hidden' })}>
+        <div style={{ padding:'14px 20px 12px', display:'flex', justifyContent:'space-between', alignItems:'baseline', flexWrap:'wrap', gap:8 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600 }}>Mapa de precisión LR · {params.length} combinaciones entrenadas</div>
+            {lastTrained && <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:3 }}>Último entrenamiento: {lastTrained}</div>}
+          </div>
+          <div style={{ display:'flex', gap:10, fontSize:11, color:'var(--text-hint)' }}>
+            <span style={{ color:'#22c55e' }}>■ ≥60%</span>
+            <span style={{ color:'#f59e0b' }}>■ 50–60%</span>
+            <span style={{ color:'#ef4444' }}>■ &lt;50%</span>
+            <span>□ sin datos</span>
+          </div>
+        </div>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, textAlign:'left', minWidth:160 }}>Modelo</th>
+                {horizons.map(h => (
+                  <th key={h} style={{ ...th, textAlign:'center', minWidth:140 }}>{h} min</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {models.map(model => (
+                <tr key={model} style={{ borderBottom:'1px solid var(--border)' }}>
+                  <td style={td({ fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)", fontSize:11 })}>{model}</td>
+                  {horizons.map(h => {
+                    const p = grid.get(model)?.get(h)
+                    const acc = p?.train_accuracy ?? null
+                    const blend = p ? Math.min(p.train_samples / 500, 0.7) : 0
+                    return (
+                      <td key={h} style={{ ...td({ textAlign:'center' }), background: cellBg(acc) }}>
+                        {p ? (
+                          <div style={{ display:'flex', flexDirection:'column', gap:2, alignItems:'center' }}>
+                            <span style={{ fontWeight:700, color: cellCol(acc) }}>
+                              {(acc! * 100).toFixed(1)}%
+                            </span>
+                            <span style={{ fontSize:10, color:'var(--text-hint)' }}>
+                              {p.train_samples} muestras
+                            </span>
+                            <span style={{ fontSize:10, color:'#6366f1' }}>
+                              LR influye {(blend * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        ) : <span style={{ color:'var(--text-hint)' }}>—</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding:'10px 20px 12px', borderTop:'1px solid var(--border)', fontSize:11, color:'var(--text-hint)' }}>
+          <b style={{ color:'#6366f1' }}>LR influye X%</b> = cuánto pesa la RL en la confianza final vs el score base.
+          Aumenta con más datos (máx. 70% con ≥500 muestras).
+        </div>
+      </div>
+
+      {/* Feature importance chart */}
+      {avgFeatures.length > 0 && (
+        <div style={card()}>
+          <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Importancia de indicadores</div>
+          <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:14 }}>
+            Coeficiente absoluto promedio de cada feature a través de todos los modelos×horizontes entrenados.
+            Un valor alto significa que ese indicador tiene mayor peso en la predicción de confiabilidad.
+          </div>
+          <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+            {avgFeatures.map(({ name, avg }) => {
+              const pctW = avg / maxAvg
+              const isScore = name.startsWith('score_')
+              const label = name.replace('score_', '').replace(/_/g, ' ')
+              return (
+                <div key={name} style={{ display:'flex', alignItems:'center', gap:10 }}>
+                  <span style={{ fontSize:11, width:200, flexShrink:0, color:'var(--text-muted)', textAlign:'right', fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>
+                    {label}
+                    {isScore && <span style={{ color:'var(--text-hint)', marginLeft:4 }}>(score)</span>}
+                  </span>
+                  <div style={{ flex:1, background:'var(--border)', borderRadius:4, height:14, overflow:'hidden', position:'relative' }}>
+                    <div style={{
+                      position:'absolute', left:0, top:0, bottom:0,
+                      width:`${pctW * 100}%`,
+                      background: isScore ? '#6366f1' : '#0ea5e9',
+                      borderRadius:4,
+                    }} />
+                  </div>
+                  <span style={{ fontSize:11, width:50, flexShrink:0, color:'var(--text-hint)', fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>
+                    {avg.toFixed(3)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop:12, fontSize:11, color:'var(--text-hint)', display:'flex', gap:16 }}>
+            <span><span style={{ color:'#6366f1' }}>■</span> Scores técnicos</span>
+            <span><span style={{ color:'#0ea5e9' }}>■</span> Indicadores directos</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main section ───────────────────────────────────────────────────────────────
 export function IntradaySectionClient() {
   const [open, setOpen]           = useState<IntraConsensus[]>([])
@@ -656,10 +820,11 @@ export function IntradaySectionClient() {
   const [analysisPeriod, setAnalysisPeriod] = useState<'today' | '3d' | '7d' | '14d' | 'all'>('7d')
   const [trainLRStatus, setTrainLRStatus]   = useState<'idle' | 'training' | 'done' | 'error'>('idle')
   const [trainLRMsg, setTrainLRMsg]         = useState('')
+  const [lrParams, setLRParams]             = useState<LRParam[]>([])
   const marketOpen = isMarketOpen()
 
   const load = useCallback(async () => {
-    const [{ data: openData }, { data: closedData }, { data: mpData }, { data: weightsData }] = await Promise.all([
+    const [{ data: openData }, { data: closedData }, { data: mpData }, { data: weightsData }, { data: lrData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
         .select('*, assets(ticker, name)').eq('status','open')
         .order('created_at', { ascending: false }).limit(500),
@@ -672,11 +837,15 @@ export function IntradaySectionClient() {
       supabase.from('model_weights_intraday')
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
         .order('direction_accuracy', { ascending: false, nullsFirst: false }),
+      supabase.from('model_learned_params_intraday')
+        .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
+        .order('model_name'),
     ])
     setOpen((openData ?? []) as IntraConsensus[])
     setClosed((closedData ?? []) as IntraConsensus[])
     setModelPreds((mpData ?? []) as unknown as ModelPred[])
     setModelWeights((weightsData ?? []) as ModelWeightIntraday[])
+    setLRParams((lrData ?? []) as LRParam[])
     setLastRefresh(new Date()); setLoading(false)
   }, [])
 
@@ -728,6 +897,10 @@ export function IntradaySectionClient() {
     if (res?.ok) {
       setTrainLRStatus('done')
       setTrainLRMsg(`${res.models_trained} modelos entrenados · ${res.total_samples} muestras · ${res.models_skipped} sin datos suficientes`)
+      const { data: lrData } = await supabase.from('model_learned_params_intraday')
+        .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
+        .order('model_name')
+      setLRParams((lrData ?? []) as LRParam[])
     } else {
       setTrainLRStatus('error')
       setTrainLRMsg(res?.error ?? 'Error desconocido')
@@ -825,6 +998,72 @@ export function IntradaySectionClient() {
                 </span>
               </div>
               <IntradayAnalysis closedPreds={analysisClosedPreds} modelPreds={analysisModelPreds} />
+
+              {/* LR vs observed accuracy comparison */}
+              {lrParams.length > 0 && (() => {
+                // Compute observed accuracy per model from modelPreds
+                const obsMap = new Map<string, { correct: number; total: number }>()
+                for (const p of analysisModelPreds) {
+                  const key = p.model_name
+                  if (!obsMap.has(key)) obsMap.set(key, { correct:0, total:0 })
+                  const e = obsMap.get(key)!
+                  e.total++
+                  if (p.direction_correct === true) e.correct++
+                }
+                // Average LR accuracy per model (across horizons)
+                const lrMap = new Map<string, number[]>()
+                for (const p of lrParams) {
+                  if (!lrMap.has(p.model_name)) lrMap.set(p.model_name, [])
+                  lrMap.get(p.model_name)!.push(p.train_accuracy)
+                }
+                const models = [...new Set([...obsMap.keys(), ...lrMap.keys()])].sort()
+                return (
+                  <div style={card()}>
+                    <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Precisión observada vs precisión LR entrenada</div>
+                    <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:14 }}>
+                      Comparación entre la precisión real de cada modelo en el período seleccionado y la precisión del modelo LR entrenado con datos históricos.
+                    </div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                      {models.map(model => {
+                        const obs     = obsMap.get(model)
+                        const obsAcc  = obs && obs.total > 0 ? obs.correct / obs.total : null
+                        const lrAcArr = lrMap.get(model)
+                        const lrAcc   = lrAcArr ? lrAcArr.reduce((s, v) => s + v, 0) / lrAcArr.length : null
+                        return (
+                          <div key={model} style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                              <span style={{ fontSize:11, fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>{model}</span>
+                              <span style={{ fontSize:10, color:'var(--text-hint)' }}>{obs?.total ?? 0} predicciones</span>
+                            </div>
+                            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>Observada</span>
+                              <div style={{ flex:1, background:'var(--border)', borderRadius:3, height:10, overflow:'hidden' }}>
+                                {obsAcc != null && <div style={{ width:`${obsAcc * 100}%`, height:'100%', background: obsAcc >= 0.60 ? '#22c55e' : obsAcc >= 0.50 ? '#f59e0b' : '#ef4444', borderRadius:3 }} />}
+                              </div>
+                              <span style={{ fontSize:11, fontWeight:700, width:40, textAlign:'right', color: obsAcc != null && obsAcc >= 0.60 ? '#22c55e' : obsAcc != null && obsAcc < 0.50 ? '#ef4444' : '#f59e0b' }}>
+                                {obsAcc != null ? `${(obsAcc*100).toFixed(0)}%` : '—'}
+                              </span>
+                            </div>
+                            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>LR entrenada</span>
+                              <div style={{ flex:1, background:'var(--border)', borderRadius:3, height:10, overflow:'hidden' }}>
+                                {lrAcc != null && <div style={{ width:`${lrAcc * 100}%`, height:'100%', background:'#6366f1', borderRadius:3, opacity:0.8 }} />}
+                              </div>
+                              <span style={{ fontSize:11, fontWeight:700, width:40, textAlign:'right', color:'#6366f1' }}>
+                                {lrAcc != null ? `${(lrAcc*100).toFixed(0)}%` : '—'}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div style={{ marginTop:12, fontSize:11, color:'var(--text-hint)', display:'flex', gap:16 }}>
+                      <span><span style={{ color:'#22c55e' }}>■</span> Observada ≥60%</span>
+                      <span><span style={{ color:'#6366f1' }}>■</span> LR entrenada (histórico completo)</span>
+                    </div>
+                  </div>
+                )
+              })()}
             </>
           )}
 
@@ -950,6 +1189,9 @@ export function IntradaySectionClient() {
                   )}
                 </div>
               </div>
+
+              {/* LR Results visualization */}
+              <LRResultsPanel params={lrParams} />
             </div>
           )}
 
