@@ -892,19 +892,57 @@ export function IntradaySectionClient() {
 
   async function trainLRModels() {
     setTrainLRStatus('training')
-    setTrainLRMsg('')
-    const res = await callFn('entrenar-lr-intraday', {})
-    if (res?.ok) {
-      setTrainLRStatus('done')
-      setTrainLRMsg(`${res.models_trained} modelos entrenados · ${res.total_samples} muestras · ${res.models_skipped} sin datos suficientes`)
-      const { data: lrData } = await supabase.from('model_learned_params_intraday')
-        .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
-        .order('model_name')
-      setLRParams((lrData ?? []) as LRParam[])
-    } else {
+    setTrainLRMsg('Iniciando entrenamiento...')
+
+    // Start background job on Python backend
+    let jobId: string
+    try {
+      const startResp = await fetch('/api/lr-train-intraday', { method: 'POST' })
+      const startData = await startResp.json()
+      if (!startData.ok) {
+        setTrainLRStatus('error')
+        setTrainLRMsg(startData.error ?? 'Error al iniciar entrenamiento')
+        return
+      }
+      jobId = startData.job_id
+    } catch (e: unknown) {
       setTrainLRStatus('error')
-      setTrainLRMsg(res?.error ?? 'Error desconocido')
+      setTrainLRMsg(e instanceof Error ? e.message : 'Error de red')
+      return
     }
+
+    // Poll for completion
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 3000))
+      try {
+        const pollResp = await fetch(`/api/lr-train-status?jobId=${jobId}`)
+        const pollData = await pollResp.json()
+        if (!pollData.ok) continue
+
+        const { status, models_done, models_total, total_samples } = pollData
+        if (status === 'fetching') {
+          setTrainLRMsg(`Obteniendo datos (${total_samples ?? 0} rows)...`)
+        } else if (status === 'training') {
+          setTrainLRMsg(`Entrenando modelos ${models_done}/${models_total}...`)
+        } else if (status === 'done') {
+          setTrainLRStatus('done')
+          const skipped = (models_total ?? 0) - (pollData.models_trained ?? 0)
+          setTrainLRMsg(`✓ ${pollData.models_trained} modelos entrenados · ${pollData.total_samples} muestras · ${skipped} sin datos suficientes`)
+          const { data: lrData } = await supabase.from('model_learned_params_intraday')
+            .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
+            .order('model_name')
+          setLRParams((lrData ?? []) as LRParam[])
+          return
+        } else if (status === 'error') {
+          setTrainLRStatus('error')
+          setTrainLRMsg(pollData.error ?? 'Error en entrenamiento')
+          return
+        }
+      } catch { /* ignore poll errors, retry */ }
+    }
+
+    setTrainLRStatus('error')
+    setTrainLRMsg('Timeout: el entrenamiento tardó demasiado')
   }
 
   function applyFilters(preds: IntraConsensus[]) {
