@@ -911,8 +911,8 @@ export function IntradaySectionClient() {
       return
     }
 
-    // Poll for completion
-    for (let i = 0; i < 120; i++) {
+    // Poll for completion — 400 × 3s = 20 min max
+    for (let i = 0; i < 400; i++) {
       await new Promise(r => setTimeout(r, 3000))
       try {
         const pollResp = await fetch(`/api/lr-train-status?jobId=${jobId}`)
