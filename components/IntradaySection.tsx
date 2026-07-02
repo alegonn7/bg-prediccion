@@ -653,6 +653,9 @@ export function IntradaySectionClient() {
   const [tab, setTab]             = useState<TabView>('open')
   const [filters, setFilters]     = useState<Filters>({ ticker:'', direction:'', horizon:'' })
   const [page, setPage]           = useState(0)
+  const [analysisPeriod, setAnalysisPeriod] = useState<'today' | '3d' | '7d' | '14d' | 'all'>('7d')
+  const [trainLRStatus, setTrainLRStatus]   = useState<'idle' | 'training' | 'done' | 'error'>('idle')
+  const [trainLRMsg, setTrainLRMsg]         = useState('')
   const marketOpen = isMarketOpen()
 
   const load = useCallback(async () => {
@@ -680,6 +683,33 @@ export function IntradaySectionClient() {
   useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id) }, [load])
   useEffect(() => setPage(0), [filters, tab])
 
+  // Filtered data for analysis tab based on selected period
+  const analysisClosedPreds = useMemo(() => {
+    if (analysisPeriod === 'all') return closed
+    const now = new Date()
+    let since: string
+    if (analysisPeriod === 'today') {
+      since = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
+    } else {
+      const days = analysisPeriod === '3d' ? 3 : analysisPeriod === '7d' ? 7 : 14
+      since = new Date(now.getTime() - days * 86400000).toISOString()
+    }
+    return closed.filter(p => (p.closed_at ?? p.created_at) >= since)
+  }, [closed, analysisPeriod])
+
+  const analysisModelPreds = useMemo(() => {
+    if (analysisPeriod === 'all') return modelPreds
+    const now = new Date()
+    let since: string
+    if (analysisPeriod === 'today') {
+      since = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
+    } else {
+      const days = analysisPeriod === '3d' ? 3 : analysisPeriod === '7d' ? 7 : 14
+      since = new Date(now.getTime() - days * 86400000).toISOString()
+    }
+    return modelPreds.filter(p => p.created_at >= since)
+  }, [modelPreds, analysisPeriod])
+
   async function recalcWeights() {
     setRecalculating(true)
     await callFn('juez-intraday', {})
@@ -689,6 +719,19 @@ export function IntradaySectionClient() {
 
   async function triggerNow() {
     setTriggering(true); await callFn('crear-prediccion-intraday', {}); await load(); setTriggering(false)
+  }
+
+  async function trainLRModels() {
+    setTrainLRStatus('training')
+    setTrainLRMsg('')
+    const res = await callFn('entrenar-lr-intraday', {})
+    if (res?.ok) {
+      setTrainLRStatus('done')
+      setTrainLRMsg(`${res.models_trained} modelos entrenados · ${res.total_samples} muestras · ${res.models_skipped} sin datos suficientes`)
+    } else {
+      setTrainLRStatus('error')
+      setTrainLRMsg(res?.error ?? 'Error desconocido')
+    }
   }
 
   function applyFilters(preds: IntraConsensus[]) {
@@ -762,7 +805,28 @@ export function IntradaySectionClient() {
             {tab !== 'analysis' && tab !== 'modelos' && <FiltersBar filters={filters} onChange={setFilters} />}
           </div>
 
-          {tab === 'analysis' && <IntradayAnalysis closedPreds={closed} modelPreds={modelPreds} />}
+          {tab === 'analysis' && (
+            <>
+              {/* Period filter */}
+              <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+                <span style={{ fontSize:12, color:'var(--text-hint)' }}>Período:</span>
+                {(['today', '3d', '7d', '14d', 'all'] as const).map(p => (
+                  <button key={p} onClick={() => setAnalysisPeriod(p)} style={{
+                    background: analysisPeriod === p ? 'var(--text)' : 'var(--card)',
+                    color: analysisPeriod === p ? 'var(--bg)' : 'var(--text-muted)',
+                    border:'1px solid var(--border)', borderRadius:6, padding:'4px 10px',
+                    fontSize:11, cursor:'pointer', fontWeight: analysisPeriod === p ? 700 : 400,
+                  }}>
+                    {p === 'today' ? 'Hoy' : p === '3d' ? '3 días' : p === '7d' ? '7 días' : p === '14d' ? '14 días' : 'Todo'}
+                  </button>
+                ))}
+                <span style={{ fontSize:11, color:'var(--text-hint)', marginLeft:4 }}>
+                  {analysisClosedPreds.filter(p => p.direction_correct != null).length} cerradas
+                </span>
+              </div>
+              <IntradayAnalysis closedPreds={analysisClosedPreds} modelPreds={analysisModelPreds} />
+            </>
+          )}
 
           {tab === 'modelos' && (
             <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
@@ -853,19 +917,37 @@ export function IntradaySectionClient() {
                 </div>
               )}
 
-              {/* ML training note */}
-              <div style={card({ background:'var(--bg)', border:'1px dashed var(--border)' })}>
-                <div style={{ fontSize:12, fontWeight:600, marginBottom:6, color:'var(--text-muted)' }}>
-                  Entrenamiento ML intraday (próximamente)
-                </div>
-                <div style={{ fontSize:12, color:'var(--text-hint)', lineHeight:1.7 }}>
-                  Para entrenar modelos LR/XGBoost intradiarios (como el sistema diario), se necesitan mínimo 30 días de datos de velas históricas.
-                  Actualmente el sistema acumula ~{Math.round(9122 / 92)} velas/activo.
-                  Los modelos ML reemplazarían las fórmulas de score actuales con predicciones aprendidas de datos históricos.
+              {/* LR Training */}
+              <div style={card()}>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Entrenamiento ML — Regresión Logística</div>
+                <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7, marginBottom:12 }}>
+                  Entrena un modelo LR independiente por cada combinación <b>modelo × horizonte</b> (hasta 39 combinaciones).
+                  Aprende qué condiciones del mercado hacen que cada modelo sea confiable, usando las predicciones cerradas como datos de entrenamiento.
                   <br />
-                  <span style={{ color:'var(--text-hint)', fontWeight:600 }}>
-                    Mientras tanto, el sistema ya aprende en tiempo real a través de los pesos adaptativos.
+                  <span style={{ color:'var(--text-hint)' }}>
+                    Features: 13 scores + RSI, VWAP, Bollinger, volumen, momentum, ATR, minutos transcurridos.
+                    La confianza calibrada se incorpora gradualmente (aumenta con más datos).
+                    Mínimo 20 muestras por modelo×horizonte para entrenar.
                   </span>
+                </div>
+                <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+                  <button
+                    onClick={trainLRModels}
+                    disabled={trainLRStatus === 'training'}
+                    style={{
+                      background: trainLRStatus === 'training' ? 'var(--border)' : '#2563eb', color:'#fff',
+                      border:'none', borderRadius:7, padding:'8px 18px', fontSize:12, fontWeight:700,
+                      cursor: trainLRStatus === 'training' ? 'default' : 'pointer',
+                    }}
+                  >
+                    {trainLRStatus === 'training' ? 'Entrenando...' : 'Entrenar modelos LR'}
+                  </button>
+                  {trainLRStatus === 'done' && (
+                    <span style={{ fontSize:12, color:'#22c55e' }}>✓ {trainLRMsg}</span>
+                  )}
+                  {trainLRStatus === 'error' && (
+                    <span style={{ fontSize:12, color:'#ef4444' }}>✗ {trainLRMsg}</span>
+                  )}
                 </div>
               </div>
             </div>
