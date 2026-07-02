@@ -43,6 +43,20 @@ function accBg(acc: number): string {
   return 'rgba(239,68,68,0.07)'
 }
 
+function maeBg(mae: number | null): string {
+  if (mae == null) return 'transparent'
+  if (mae <= 1.0) return 'rgba(34,197,94,0.08)'
+  if (mae <= 2.0) return 'rgba(245,158,11,0.07)'
+  return 'rgba(239,68,68,0.07)'
+}
+
+function maeColor(mae: number | null): string {
+  if (mae == null) return 'var(--text-hint)'
+  if (mae <= 1.0) return 'var(--up)'
+  if (mae <= 2.0) return '#f59e0b'
+  return 'var(--down)'
+}
+
 export function ModelPerformance() {
   const [open,    setOpen]    = useState(false)
   const [loading, setLoading] = useState(false)
@@ -90,18 +104,23 @@ export function ModelPerformance() {
 
   const hasData = matrix && Object.keys(matrix).length > 0
 
-  // Summary row: best model per horizon
+  // Best model per horizon by MAE (primary) and accuracy (secondary)
+  const bestByMae: Record<number, { name: string; mae: number }> = {}
   const bestPerHorizon: Record<number, { name: string; acc: number }> = {}
   if (hasData) {
     for (const h of HORIZONS) {
-      let best: { name: string; acc: number } | null = null
+      let bestAcc: { name: string; acc: number } | null = null
+      let bestMae: { name: string; mae: number } | null = null
       for (const name of MODEL_ORDER) {
         const cell = matrix[name]?.[h]
         if (!cell || cell.total < MIN_SAMPLES) continue
         const acc = cell.correct / cell.total
-        if (!best || acc > best.acc) best = { name, acc }
+        const mae = cell.maeN > 0 ? cell.maeSum / cell.maeN : null
+        if (!bestAcc || acc > bestAcc.acc) bestAcc = { name, acc }
+        if (mae != null && (!bestMae || mae < bestMae.mae)) bestMae = { name, mae }
       }
-      if (best) bestPerHorizon[h] = best
+      if (bestAcc) bestPerHorizon[h] = bestAcc
+      if (bestMae) bestByMae[h] = bestMae
     }
   }
 
@@ -123,7 +142,7 @@ export function ModelPerformance() {
           Rendimiento de modelos
         </span>
         <span style={{ fontSize: 12, color: 'var(--text-hint)', flex: 1 }}>
-          precisión de dirección por horizonte · se actualiza a diario
+          error de magnitud (±MAE) por horizonte · dirección es métrica secundaria
         </span>
         {total > 0 && (
           <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', flexShrink: 0 }}>
@@ -248,27 +267,37 @@ export function ModelPerformance() {
                               )
                             }
                             const acc = cell.correct / cell.total
-                            const mae = cell.maeN > 0 ? (cell.maeSum / cell.maeN).toFixed(1) : null
-                            const isBest = bestPerHorizon[h]?.name === name
+                            const mae = cell.maeN > 0 ? cell.maeSum / cell.maeN : null
+                            const isBestMae = bestByMae[h]?.name === name
+                            const isBestAcc = bestPerHorizon[h]?.name === name
                             return (
                               <td key={h} style={{
                                 textAlign: 'center', padding: '9px 8px',
-                                background: accBg(acc),
+                                background: mae != null ? maeBg(mae) : accBg(acc),
                                 position: 'relative',
                               }}>
-                                <div style={{
-                                  color: accColor(acc),
-                                  fontWeight: 700,
-                                  fontSize: 12,
-                                }}>
-                                  {Math.round(acc * 100)}%
-                                  {isBest && (
-                                    <span style={{ fontSize: 8, marginLeft: 2, color: 'var(--up)', verticalAlign: 'super' }}>★</span>
-                                  )}
-                                </div>
-                                <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 1 }}>
-                                  n={cell.total}{mae != null ? ` ±${mae}` : ''}
-                                </div>
+                                {mae != null ? (
+                                  <>
+                                    <div style={{ color: maeColor(mae), fontWeight: 700, fontSize: 12 }}>
+                                      ±{mae.toFixed(1)}%
+                                      {isBestMae && <span style={{ fontSize: 8, marginLeft: 2, color: 'var(--up)', verticalAlign: 'super' }}>★</span>}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: accColor(acc), marginTop: 1 }}>
+                                      dir {Math.round(acc * 100)}%{isBestAcc ? '★' : ''}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 1 }}>
+                                      n={cell.total}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div style={{ color: accColor(acc), fontWeight: 700, fontSize: 12 }}>
+                                      {Math.round(acc * 100)}%
+                                      {isBestAcc && <span style={{ fontSize: 8, marginLeft: 2, color: 'var(--up)', verticalAlign: 'super' }}>★</span>}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 1 }}>n={cell.total}</div>
+                                  </>
+                                )}
                               </td>
                             )
                           })}
@@ -298,9 +327,11 @@ export function ModelPerformance() {
                 </table>
               </div>
 
-              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-hint)', fontFamily: MONO }}>
-                ±MAE = error de magnitud promedio en puntos porcentuales.
-                El calibrador ajusta automáticamente los modelos con MAE alto cuando hay ≥200 predicciones cerradas.
+              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-hint)', fontFamily: MONO, lineHeight: 1.6 }}>
+                <b>±MAE</b> = error de magnitud promedio en puntos porcentuales — cuánto erramos en el <i>cuánto</i>, independiente de dirección.
+                Verde ≤1% · Amarillo ≤2% · Rojo &gt;2%.
+                "dir X%" = precisión de dirección (métrica secundaria).
+                ★ = mejor modelo para ese horizonte.
               </div>
             </>
           )}

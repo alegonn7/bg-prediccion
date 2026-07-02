@@ -218,41 +218,52 @@ function FiltersBar({ filters, onChange }: { filters: Filters; onChange: (f: Fil
 
 // ── Predictions table ──────────────────────────────────────────────────────────
 function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?: boolean }) {
+  const hasClosed = preds.some(p => p.actual_pct != null)
+  const headers = ['Ticker','Dirección','Horizonte','Pred %','Real %', hasClosed ? 'Δ Magnitud' : null, 'Acuerdo', showStatus ? 'Dir.' : 'Cierra en'].filter(Boolean) as string[]
   return (
     <div style={{ overflowX:'auto' }}>
       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
         <thead>
           <tr>
-            {['Ticker','Dirección','Conf.','Acuerdo','Horizonte','Pred %','Real %','Modelos', showStatus ? 'Estado' : 'Cierra en'].map((h, i) => (
-              <th key={h} style={{ ...th, textAlign: i >= 2 ? 'center' : 'left' }}>{h}</th>
+            {headers.map((h, i) => (
+              <th key={h} style={{ ...th, textAlign: i >= 2 ? 'center' : 'left', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {preds.map(p => (
-            <tr key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
-              <td style={td({ fontWeight:700, ...mono })}>{p.assets?.ticker ?? '?'}</td>
-              <td style={td()}><DirChip d={p.direction} correct={p.direction_correct} /></td>
-              <td style={td({ textAlign:'center' })}>{Math.round(p.confidence * 100)}%</td>
-              <td style={td({ textAlign:'center' })}>{Math.round(p.agreement_pct * 100)}%</td>
-              <td style={td({ textAlign:'center' })}><span style={{ background:'var(--border)', borderRadius:4, padding:'1px 6px', fontSize:11, ...mono }}>{p.horizon_minutes}m</span></td>
-              <td style={td({ textAlign:'center', color: p.final_pct_predicted >= 0 ? '#22c55e' : '#ef4444', ...mono })}>{p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted?.toFixed(2)}%</td>
-              <td style={td({ textAlign:'center', ...mono })}>
-                {p.actual_pct != null
-                  ? <span style={{ color: p.actual_pct >= 0 ? '#22c55e' : '#ef4444' }}>{p.actual_pct >= 0 ? '+' : ''}{p.actual_pct.toFixed(2)}%</span>
-                  : <span style={{ color:'var(--text-hint)' }}>—</span>}
-              </td>
-              <td style={td({ textAlign:'center', fontSize:11, color:'var(--text-muted)' })}>↑{p.models_bullish} ↓{p.models_bearish} —{p.models_neutral}</td>
-              {showStatus
-                ? <td style={td({ textAlign:'center' })}>
-                    <span style={{ fontSize:11, color: p.direction_correct === true ? '#22c55e' : p.direction_correct === false ? '#ef4444' : 'var(--text-hint)' }}>
-                      {p.direction_correct === true ? 'Correcto' : p.direction_correct === false ? 'Incorrecto' : p.status}
-                    </span>
+          {preds.map(p => {
+            const magErr = p.actual_pct != null && p.final_pct_predicted != null
+              ? Math.abs(Math.abs(p.actual_pct) - Math.abs(p.final_pct_predicted))
+              : null
+            const magErrColor = magErr == null ? 'var(--text-hint)' : magErr <= 0.25 ? '#22c55e' : magErr <= 0.5 ? '#f59e0b' : '#ef4444'
+            return (
+              <tr key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
+                <td style={td({ fontWeight:700, ...mono })}>{p.assets?.ticker ?? '?'}</td>
+                <td style={td()}><DirChip d={p.direction} correct={p.direction_correct} /></td>
+                <td style={td({ textAlign:'center' })}><span style={{ background:'var(--border)', borderRadius:4, padding:'1px 6px', fontSize:11, ...mono }}>{p.horizon_minutes}m</span></td>
+                <td style={td({ textAlign:'center', ...mono })}>{p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted?.toFixed(2)}%</td>
+                <td style={td({ textAlign:'center', ...mono })}>
+                  {p.actual_pct != null
+                    ? <span style={{ color: p.actual_pct >= 0 ? '#22c55e' : '#ef4444' }}>{p.actual_pct >= 0 ? '+' : ''}{p.actual_pct.toFixed(2)}%</span>
+                    : <span style={{ color:'var(--text-hint)' }}>—</span>}
+                </td>
+                {hasClosed && (
+                  <td style={td({ textAlign:'center', fontWeight:700, color: magErrColor, ...mono })}>
+                    {magErr != null ? `${magErr.toFixed(2)}%` : '—'}
                   </td>
-                : <td style={td({ textAlign:'center' })}><CountdownCell iso={p.target_time} /></td>
-              }
-            </tr>
-          ))}
+                )}
+                <td style={td({ textAlign:'center', fontSize:11, color:'var(--text-muted)' })}>↑{p.models_bullish} ↓{p.models_bearish}</td>
+                {showStatus
+                  ? <td style={td({ textAlign:'center' })}>
+                      <span style={{ fontSize:11, color: p.direction_correct === true ? '#22c55e' : p.direction_correct === false ? '#ef4444' : 'var(--text-hint)' }}>
+                        {p.direction_correct === true ? '✓' : p.direction_correct === false ? '✗' : '—'}
+                      </span>
+                    </td>
+                  : <td style={td({ textAlign:'center' })}><CountdownCell iso={p.target_time} /></td>
+                }
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -312,15 +323,34 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
     const mae = avg(maes)
 
     // By horizon
-    const byHorizon: Record<number, { n: number; c: number; confs: number[]; maes: number[] }> = {}
+    const byHorizon: Record<number, { n: number; c: number; confs: number[]; maes: number[]; predMags: number[]; actualMags: number[]; magMaes: number[] }> = {}
     for (const p of cp) {
       const h = p.horizon_minutes
-      if (!byHorizon[h]) byHorizon[h] = { n: 0, c: 0, confs: [], maes: [] }
+      if (!byHorizon[h]) byHorizon[h] = { n: 0, c: 0, confs: [], maes: [], predMags: [], actualMags: [], magMaes: [] }
       byHorizon[h].n++
       if (p.direction_correct) byHorizon[h].c++
       byHorizon[h].confs.push(p.confidence)
-      if (p.actual_pct != null) byHorizon[h].maes.push(Math.abs(p.actual_pct - p.final_pct_predicted))
+      if (p.actual_pct != null && p.final_pct_predicted != null) {
+        byHorizon[h].maes.push(Math.abs(p.actual_pct - p.final_pct_predicted))
+        const predMag = Math.abs(p.final_pct_predicted)
+        const actMag  = Math.abs(p.actual_pct)
+        byHorizon[h].predMags.push(predMag)
+        byHorizon[h].actualMags.push(actMag)
+        byHorizon[h].magMaes.push(Math.abs(predMag - actMag))
+      }
     }
+
+    // Global magnitude stats
+    const allPredMags   = cp.filter(p => p.final_pct_predicted != null).map(p => Math.abs(p.final_pct_predicted))
+    const allActualMags = cp.filter(p => p.actual_pct != null).map(p => Math.abs(p.actual_pct!))
+    const allMagMaes    = cp.filter(p => p.actual_pct != null && p.final_pct_predicted != null)
+      .map(p => Math.abs(Math.abs(p.final_pct_predicted) - Math.abs(p.actual_pct!)))
+    const avgPredMag   = avg(allPredMags)
+    const avgActualMag = avg(allActualMags)
+    const magBias      = avgPredMag != null && avgActualMag != null ? avgPredMag - avgActualMag : null
+    const magMae       = avg(allMagMaes)
+    const magWithin03  = allMagMaes.length > 0 ? allMagMaes.filter(e => e <= 0.3).length / allMagMaes.length : null
+    const magWithin05  = allMagMaes.length > 0 ? allMagMaes.filter(e => e <= 0.5).length / allMagMaes.length : null
 
     // By direction
     const byDir: Record<string, { n: number; c: number }> = {}
@@ -395,7 +425,7 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
       if (p.mae != null) m.maes.push(Number(p.mae))
     }
 
-    return { total, correct, accuracy, mae, byHorizon, byDir, byAgree, confBuckets, bySession, byTicker, dailyTrend, byModel }
+    return { total, correct, accuracy, mae, byHorizon, byDir, byAgree, confBuckets, bySession, byTicker, dailyTrend, byModel, avgPredMag, avgActualMag, magBias, magMae, magWithin03, magWithin05 }
   }, [closedPreds, modelPreds])
 
   if (!stats || closedPreds.length === 0) {
@@ -407,32 +437,65 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
     )
   }
 
-  const { total, correct, accuracy, mae, byHorizon, byDir, byAgree, confBuckets, bySession, byTicker, dailyTrend, byModel } = stats
+  const { total, correct, accuracy, mae, byHorizon, byDir, byAgree, confBuckets, bySession, byTicker, dailyTrend, byModel, avgPredMag, avgActualMag, magBias, magMae, magWithin03, magWithin05 } = stats
 
   const horizons = [60, 120, 240]
   const sessionOrder = ['Apertura (0-30m)', 'Mañana (30-120m)', 'Mediodía (2-4h)', 'Tarde (4h+)']
   const sortedTickers = Object.entries(byTicker).sort((a, b) => b[1].n - a[1].n)
-  const sortedModels  = Object.entries(byModel).sort((a, b) => (b[1].n > 0 ? b[1].c/b[1].n : 0) - (a[1].n > 0 ? a[1].c/a[1].n : 0))
+  // Sort by MAE ascending (menor error = mejor), fallback a dirección si no hay MAE
+  const sortedModels = Object.entries(byModel).sort((a, b) => {
+    const maeA = avg(a[1].maes); const maeB = avg(b[1].maes)
+    if (maeA != null && maeB != null) return maeA - maeB
+    if (maeA != null) return -1; if (maeB != null) return 1
+    return 0
+  })
+
+  function magMaeColor(v: number | null) {
+    if (v == null) return 'var(--text-muted)'
+    if (v <= 0.25) return '#22c55e'
+    if (v <= 0.50) return '#f59e0b'
+    return '#ef4444'
+  }
+
+  const magBiasLabel = magBias == null ? '—'
+    : magBias > 0.05 ? `+${magBias.toFixed(2)}% sobreestimamos`
+    : magBias < -0.05 ? `${magBias.toFixed(2)}% subestimamos`
+    : 'Sin sesgo'
+  const magBiasColor = magBias == null ? 'var(--text-muted)'
+    : Math.abs(magBias) <= 0.05 ? '#22c55e'
+    : Math.abs(magBias) <= 0.20 ? '#f59e0b' : '#ef4444'
 
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:24 }}>
 
-      {/* ── Global stats ── */}
+      {/* ── ERROR DE MAGNITUD — métrica principal ── */}
       <div>
-        <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 14px', color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.08em' }}>Resumen global</h3>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px,1fr))', gap:12 }}>
+        <h3 style={{ fontSize:14, fontWeight:700, margin:'0 0 14px', color:'var(--text)', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+          Error de magnitud
+          <span style={{ marginLeft:10, fontSize:11, fontWeight:400, color:'var(--text-hint)', textTransform:'none', letterSpacing:0 }}>
+            cuánto erramos en el % predicho, independiente de dirección
+          </span>
+        </h3>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(150px,1fr))', gap:12, marginBottom:12 }}>
+          <StatCard label="Error magnitud (MAE)" value={magMae != null ? `${magMae.toFixed(2)}%` : '—'} sub="||pred| − |real||" color={magMaeColor(magMae)} />
+          <StatCard label="Pred. media" value={avgPredMag != null ? `${avgPredMag.toFixed(2)}%` : '—'} sub="lo que predijimos" />
+          <StatCard label="Real media" value={avgActualMag != null ? `${avgActualMag.toFixed(2)}%` : '—'} sub="lo que ocurrió" />
+          <StatCard label="Sesgo sistemático" value={magBiasLabel} color={magBiasColor} />
+          <StatCard label="Dentro de ±0.3%" value={magWithin03 != null ? `${(magWithin03 * 100).toFixed(0)}%` : '—'} sub="predicciones precisas" color={magWithin03 != null && magWithin03 >= 0.5 ? '#22c55e' : 'var(--text)'} />
+          <StatCard label="Dentro de ±0.5%" value={magWithin05 != null ? `${(magWithin05 * 100).toFixed(0)}%` : '—'} sub="predicciones aceptables" />
+        </div>
+      </div>
+
+      {/* ── Dirección — métrica secundaria ── */}
+      <div>
+        <h3 style={{ fontSize:13, fontWeight:600, margin:'0 0 12px', color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+          Dirección
+          <span style={{ marginLeft:10, fontSize:11, fontWeight:400, color:'var(--text-hint)', textTransform:'none', letterSpacing:0 }}>métrica básica</span>
+        </h3>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(130px,1fr))', gap:10 }}>
           <StatCard label="Cerradas" value={total} />
-          <StatCard label="Correctas" value={correct} color="#22c55e" />
           <StatCard label="Precisión" value={fmt(accuracy)} color={accColor(accuracy)} />
-          <StatCard label="Error medio" value={mae != null ? `${mae.toFixed(2)}%` : '—'} sub="|pred − real|" />
-          <StatCard label="Mejor horizonte" value={
-            horizons.map(h => ({ h, acc: pct(byHorizon[h]?.c ?? 0, byHorizon[h]?.n ?? 0) }))
-              .filter(x => x.acc != null).sort((a, b) => b.acc! - a.acc!)[0]?.h ?? '—'
-          } sub="en precisión" />
-          <StatCard label="Mejor dirección" value={
-            Object.entries(byDir).sort((a, b) => pct(b[1].c, b[1].n)! - pct(a[1].c, a[1].n)!)[0]?.[0] === 'up' ? '↑ Sube' :
-            Object.entries(byDir).sort((a, b) => pct(b[1].c, b[1].n)! - pct(a[1].c, a[1].n)!)[0]?.[0] === 'down' ? '↓ Baja' : '—'
-          } />
+          <StatCard label="Correctas" value={correct} color="#22c55e" />
         </div>
       </div>
 
@@ -443,16 +506,40 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
           {horizons.map(h => {
             const d = byHorizon[h]
             const acc = pct(d?.c ?? 0, d?.n ?? 0)
+            const hMagMae   = avg(d?.magMaes ?? [])
+            const hPredMag  = avg(d?.predMags ?? [])
+            const hActMag   = avg(d?.actualMags ?? [])
+            const hBias     = hPredMag != null && hActMag != null ? hPredMag - hActMag : null
             return (
               <div key={h} style={card()}>
-                <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.08em' }}>{h} minutos</div>
-                <div style={{ fontSize:26, fontWeight:700, color: accColor(acc), lineHeight:1, marginBottom:6 }}>{fmt(acc)}</div>
-                <MiniBar pct={acc ?? 0} color={acc != null && acc >= 0.6 ? '#22c55e' : acc != null && acc < 0.4 ? '#ef4444' : '#f59e0b'} />
-                <div style={{ display:'flex', justifyContent:'space-between', marginTop:8, fontSize:11, color:'var(--text-hint)' }}>
-                  <span>{d?.c ?? 0}/{d?.n ?? 0} correctas</span>
-                  <span>conf. media {fmt(avg(d?.confs ?? []))}</span>
+                <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:10, textTransform:'uppercase', letterSpacing:'0.08em' }}>{h} minutos · {d?.n ?? 0} pred.</div>
+
+                {/* Error de magnitud — principal */}
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:3 }}>Error de magnitud</div>
+                  <div style={{ fontSize:22, fontWeight:700, color: magMaeColor(hMagMae), lineHeight:1 }}>
+                    {hMagMae != null ? `${hMagMae.toFixed(2)}%` : '—'}
+                  </div>
+                  {hPredMag != null && hActMag != null && (
+                    <div style={{ display:'flex', gap:10, marginTop:5, fontSize:11, color:'var(--text-hint)' }}>
+                      <span>pred <b style={{ color:'var(--text)' }}>{hPredMag.toFixed(2)}%</b></span>
+                      <span>real <b style={{ color: hActMag >= hPredMag * 0.85 ? '#22c55e' : '#f59e0b' }}>{hActMag.toFixed(2)}%</b></span>
+                      {hBias != null && <span style={{ color: Math.abs(hBias) <= 0.1 ? '#22c55e' : '#f59e0b' }}>
+                        sesgo {hBias > 0 ? '+' : ''}{hBias.toFixed(2)}%
+                      </span>}
+                    </div>
+                  )}
                 </div>
-                {d?.maes.length ? <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:2 }}>MAE {avg(d.maes)!.toFixed(2)}%</div> : null}
+
+                {/* Dirección — secundario */}
+                <div style={{ borderTop:'1px solid var(--border)', paddingTop:8, marginTop:4 }}>
+                  <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:3 }}>Dirección</div>
+                  <MiniBar pct={acc ?? 0} color={acc != null && acc >= 0.6 ? '#22c55e' : acc != null && acc < 0.4 ? '#ef4444' : '#f59e0b'} />
+                  <div style={{ display:'flex', justifyContent:'space-between', marginTop:4, fontSize:11, color:'var(--text-hint)' }}>
+                    <span style={{ fontWeight:600, color: accColor(acc) }}>{fmt(acc)}</span>
+                    <span>{d?.c ?? 0}/{d?.n ?? 0} correctas</span>
+                  </div>
+                </div>
               </div>
             )
           })}
@@ -605,18 +692,18 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
         </div>
       </div>
 
-      {/* ── Ranking de modelos individuales ── */}
+      {/* ── Ranking de modelos individuales ── ordenado por MAE */}
       {sortedModels.length > 0 && (
         <div style={card({ padding:0, overflow:'hidden' })}>
           <div style={{ padding:'16px 20px 14px' }}>
-            <h3 style={{ fontSize:13, fontWeight:600, margin:0 }}>Ranking de los 13 modelos individuales</h3>
-            <p style={{ fontSize:11, color:'var(--text-hint)', margin:'4px 0 0' }}>Precisión de cada modelo por separado (no el consenso)</p>
+            <h3 style={{ fontSize:13, fontWeight:600, margin:0 }}>Ranking de modelos — por error de magnitud</h3>
+            <p style={{ fontSize:11, color:'var(--text-hint)', margin:'4px 0 0' }}>Ordenado por MAE ascendente (menor error de magnitud = mejor). Dirección es info secundaria.</p>
           </div>
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
               <thead>
                 <tr>
-                  {['#','Modelo','Total','Precisión global','↑ Precisión','↓ Precisión','MAE medio','Barra'].map(h => (
+                  {['#','Modelo','Preds','MAE magnitud','Pred media','Real media','Sesgo','Precisión dir.'].map(h => (
                     <th key={h} style={{ ...th, textAlign: h === 'Modelo' || h === '#' ? 'left' : 'center' }}>{h}</th>
                   ))}
                 </tr>
@@ -624,24 +711,26 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
               <tbody>
                 {sortedModels.map(([model, d], i) => {
                   const a     = pct(d.c, d.n)
-                  const upAcc = pct(d.up_c, d.up_n)
-                  const dnAcc = pct(d.down_c, d.down_n)
                   const maeA  = avg(d.maes)
                   return (
                     <tr key={model} style={{ borderBottom:'1px solid var(--border)' }}>
                       <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
                       <td style={td({ fontWeight:600, ...mono })}>{model}</td>
                       <td style={td({ textAlign:'center', color:'var(--text-muted)' })}>{d.n}</td>
-                      <td style={td({ textAlign:'center', fontWeight:700, color: accColor(a) })}>{fmt(a)}</td>
-                      <td style={td({ textAlign:'center', color: accColor(upAcc) })}>{fmt(upAcc)}</td>
-                      <td style={td({ textAlign:'center', color: accColor(dnAcc) })}>{fmt(dnAcc)}</td>
-                      <td style={td({ textAlign:'center', color:'var(--text-muted)', ...mono })}>{fmtN(maeA)}%</td>
-                      <td style={td({ minWidth:100 })}><MiniBar pct={a ?? 0} color={a != null && a >= 0.6 ? '#22c55e' : a != null && a < 0.4 ? '#ef4444' : '#f59e0b'} /></td>
+                      <td style={td({ textAlign:'center', fontWeight:700, color: magMaeColor(maeA) })}>{maeA != null ? `${maeA.toFixed(2)}%` : '—'}</td>
+                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
+                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
+                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
+                      <td style={td({ textAlign:'center', color: accColor(a) })}>{fmt(a)}</td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
+          </div>
+          <div style={{ padding:'8px 20px 12px', borderTop:'1px solid var(--border)', fontSize:11, color:'var(--text-hint)' }}>
+            MAE magnitud = error promedio en <b>cuánto</b> nos equivocamos (independiente de si acertamos la dirección).
+            Verde ≤0.25% · Amarillo ≤0.50% · Rojo &gt;0.50%
           </div>
         </div>
       )}
