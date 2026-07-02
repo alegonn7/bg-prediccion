@@ -278,6 +278,10 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     elapsed: number
     estimated_remaining: number | null
   } | null>(null)
+  const [predictJobId, setPredictJobId] = useState<string | null>(null)
+  const [predictProgress, setPredictProgress] = useState<{
+    models_done: number; models_total: number; current_model: string | null; elapsed: number
+  } | null>(null)
   const [showXgbHistory, setShowXgbHistory] = useState(false)
   const [activeSection, setActiveSection] = useState<'resumen' | 'rendimiento' | 'activos' | 'historial'>('resumen')
   const [changelogFilter, setChangelogFilter] = useState<'all' | 'lr_params' | 'weight' | 'changes'>('changes')
@@ -330,6 +334,27 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     }, 3000)
     return () => clearInterval(interval)
   }, [xgbJobId])
+
+  useEffect(() => {
+    if (!predictJobId) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/xgb-predict-status?jobId=${predictJobId}`)
+        const json = await res.json()
+        if (!json.ok) return
+        setPredictProgress({ models_done: json.models_done, models_total: json.models_total, current_model: json.current_model, elapsed: json.elapsed })
+        if (json.status === 'done') {
+          const r = json.result ?? {}
+          setXgbResult(`Predicciones generadas: ${r.predictions} para ${r.assets} activos · ${r.models} modelos XGBoost · fecha ${r.date}`)
+          setPredictJobId(null); setPredictProgress(null); setXgbPredicting(false)
+        } else if (json.status === 'error') {
+          setXgbResult(`ERROR en predicciones\n\n${json.error ?? 'Error desconocido'}`)
+          setPredictJobId(null); setPredictProgress(null); setXgbPredicting(false)
+        }
+      } catch { /* ignore transient errors */ }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [predictJobId])
 
   function fmtSeconds(s: number): string {
     if (s < 60) return `${s}s`
@@ -422,17 +447,19 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   async function handleXGBPredict() {
     setXgbPredicting(true)
     setXgbResult(null)
+    setPredictProgress(null)
     try {
       const res = await fetch('/api/xgb-predict', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
       const json = await res.json()
-      if (json.ok) {
-        setXgbResult(`Predicciones generadas: ${json.predictions} para ${json.assets} activos · ${json.models} modelos XGBoost · fecha ${json.date}`)
+      if (json.ok && json.job_id) {
+        setPredictJobId(json.job_id)
+        // polling useEffect takes over
       } else {
-        setXgbResult(`Error: ${json.error}`)
+        setXgbResult(`Error: ${json.error ?? 'sin respuesta'}`)
+        setXgbPredicting(false)
       }
     } catch {
       setXgbResult('Error de conexión.')
-    } finally {
       setXgbPredicting(false)
     }
   }
@@ -663,7 +690,7 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
                   fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
                 }}
               >
-                {xgbPredicting ? 'Generando…' : 'Generar predicciones'}
+                {xgbPredicting ? (predictProgress ? `${predictProgress.models_done}/${predictProgress.models_total} modelos…` : 'Iniciando…') : 'Generar predicciones'}
               </button>
             </div>
           </div>
