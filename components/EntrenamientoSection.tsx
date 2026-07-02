@@ -294,6 +294,12 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
   const [showXgbChart, setShowXgbChart] = useState(true)
   const [xgbChartModel, setXgbChartModel] = useState<string>('all')
   const [showExplanation, setShowExplanation] = useState(false)
+  const [lrDailyTraining, setLrDailyTraining] = useState(false)
+  const [lrDailyJobId, setLrDailyJobId] = useState<string | null>(null)
+  const [lrDailyResult, setLrDailyResult] = useState<string | null>(null)
+  const [lrDailyProgress, setLrDailyProgress] = useState<{
+    status: string; buckets_done: number; elapsed: number
+  } | null>(null)
 
   useEffect(() => {
     if (!xgbJobId) return
@@ -334,6 +340,28 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     }, 3000)
     return () => clearInterval(interval)
   }, [xgbJobId])
+
+  useEffect(() => {
+    if (!lrDailyJobId) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/lr-train-daily-status?jobId=${lrDailyJobId}`)
+        const json = await res.json()
+        if (!json.ok) return
+        setLrDailyProgress({ status: json.status, buckets_done: json.models_done ?? 0, elapsed: json.elapsed ?? 0 })
+        if (json.status === 'done') {
+          setLrDailyResult(
+            `${json.models_trained} buckets entrenados · ${(json.total_samples ?? 0).toLocaleString()} muestras totales · ver tabla de predicciones para métricas R²/MAE por horizonte`
+          )
+          setLrDailyJobId(null); setLrDailyProgress(null); setLrDailyTraining(false)
+        } else if (json.status === 'error') {
+          setLrDailyResult(`ERROR\n\n${json.error ?? 'Error desconocido'}`)
+          setLrDailyJobId(null); setLrDailyProgress(null); setLrDailyTraining(false)
+        }
+      } catch { /* ignore transient */ }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [lrDailyJobId])
 
   useEffect(() => {
     if (!predictJobId) return
@@ -461,6 +489,25 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
     } catch {
       setXgbResult('Error de conexión.')
       setXgbPredicting(false)
+    }
+  }
+
+  async function handleLRDailyTrain() {
+    setLrDailyTraining(true)
+    setLrDailyResult(null)
+    setLrDailyProgress(null)
+    try {
+      const res = await fetch('/api/lr-train-daily', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      const json = await res.json()
+      if (json.ok && json.job_id) {
+        setLrDailyJobId(json.job_id)
+      } else {
+        setLrDailyResult(`Error: ${json.error ?? 'sin respuesta'}`)
+        setLrDailyTraining(false)
+      }
+    } catch {
+      setLrDailyResult('Error de conexión.')
+      setLrDailyTraining(false)
     }
   }
 
@@ -960,6 +1007,62 @@ export function EntrenamientoSection({ runs, horizonWeights, globalWeights, back
               </div>
             )
           })()}
+        </div>
+      </Card>
+
+      {/* Signed Ridge daily */}
+      <Card>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Ridge firmado — magnitud diaria</div>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
+                Un modelo Ridge por horizonte (7/14/30/60/90d) entrenado con 1,184 predicciones cerradas reales ·
+                predice % firmado → dirección + magnitud juntos · reemplaza la fórmula makePathDecay en el consenso
+              </div>
+            </div>
+            <button
+              onClick={handleLRDailyTrain}
+              disabled={lrDailyTraining}
+              style={{
+                background: lrDailyTraining ? 'var(--border)' : '#059669',
+                color: '#fff', border: 'none', borderRadius: 7,
+                padding: '8px 18px', fontSize: 12, fontWeight: 700,
+                cursor: lrDailyTraining ? 'default' : 'pointer',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {lrDailyTraining
+                ? (lrDailyProgress ? `Entrenando… ${lrDailyProgress.buckets_done}/5 buckets` : 'Iniciando…')
+                : 'Entrenar modelo firmado (MAE)'}
+            </button>
+          </div>
+
+          {lrDailyResult && (() => {
+            const isError = lrDailyResult.startsWith('ERROR')
+            return (
+              <div style={{
+                fontSize: 11, lineHeight: 1.8,
+                background: isError ? '#dc262610' : 'var(--bg)',
+                border: `1px solid ${isError ? '#dc262640' : 'var(--border)'}`,
+                borderLeft: `3px solid ${isError ? '#dc2626' : '#059669'}`,
+                borderRadius: 6, padding: '10px 12px',
+                fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
+                whiteSpace: 'pre-wrap',
+                color: isError ? '#f87171' : 'var(--text-muted)',
+              }}>
+                {isError ? lrDailyResult : `Entrenamiento completado:\n${lrDailyResult}`}
+              </div>
+            )
+          })()}
+
+          <div style={{ fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.6 }}>
+            <b style={{ color: 'var(--text-muted)' }}>Features (17):</b>{' '}
+            price_vs_sma20/50/200, RSI norm, MACD norm, BB%B, BB squeeze, ATR%, HV20, ADX, ROC5/10/20, candle signal, OBV trend, mes sin/cos ·{' '}
+            <b style={{ color: 'var(--text-muted)' }}>Target:</b> actual_signed_pct = (precio_cierre − precio_creacion) / precio_creacion × 100 ·{' '}
+            <b style={{ color: 'var(--text-muted)' }}>Métrica primaria:</b> MAE de magnitud (no dirección)
+          </div>
         </div>
       </Card>
 
