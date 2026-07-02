@@ -820,6 +820,7 @@ export function IntradaySectionClient() {
   const [analysisPeriod, setAnalysisPeriod] = useState<'today' | '3d' | '7d' | '14d' | 'all'>('7d')
   const [trainLRStatus, setTrainLRStatus]   = useState<'idle' | 'training' | 'done' | 'error'>('idle')
   const [trainLRMsg, setTrainLRMsg]         = useState('')
+  const [lrProgress, setLRProgress]         = useState<{ done: number; total: number; phase: string; eta: number | null }>({ done: 0, total: 0, phase: '', eta: null })
   const [lrParams, setLRParams]             = useState<LRParam[]>([])
   const marketOpen = isMarketOpen()
 
@@ -893,6 +894,8 @@ export function IntradaySectionClient() {
   async function trainLRModels() {
     setTrainLRStatus('training')
     setTrainLRMsg('Iniciando entrenamiento...')
+    setLRProgress({ done: 0, total: 0, phase: 'starting', eta: null })
+    const wallStart = Date.now()
 
     // Start background job on Python backend
     let jobId: string
@@ -919,15 +922,28 @@ export function IntradaySectionClient() {
         const pollData = await pollResp.json()
         if (!pollData.ok) continue
 
-        const { status, models_done, models_total, total_samples } = pollData
+        const { status, models_done, models_total, total_samples, elapsed } = pollData
+
+        // Compute ETA based on elapsed seconds from backend
+        let eta: number | null = null
+        if (status === 'training' && models_done > 0 && models_total > 0 && elapsed > 0) {
+          const rate = models_done / elapsed        // models per second
+          const remaining = models_total - models_done
+          eta = remaining > 0 ? Math.round(remaining / rate) : 0
+        }
+
         if (status === 'fetching') {
-          setTrainLRMsg(`Obteniendo datos (${total_samples ?? 0} rows)...`)
+          setTrainLRMsg(`Descargando datos... (${total_samples ?? 0} rows)`)
+          setLRProgress({ done: 0, total: 0, phase: 'fetching', eta: null })
         } else if (status === 'training') {
-          setTrainLRMsg(`Entrenando modelos ${models_done}/${models_total}...`)
+          setTrainLRMsg(`Entrenando ${models_done}/${models_total} modelos`)
+          setLRProgress({ done: models_done ?? 0, total: models_total ?? 39, phase: 'training', eta })
         } else if (status === 'done') {
           setTrainLRStatus('done')
           const skipped = (models_total ?? 0) - (pollData.models_trained ?? 0)
-          setTrainLRMsg(`✓ ${pollData.models_trained} modelos entrenados · ${pollData.total_samples} muestras · ${skipped} sin datos suficientes`)
+          const totalSec = Math.round((Date.now() - wallStart) / 1000)
+          setTrainLRMsg(`${pollData.models_trained} modelos · ${pollData.total_samples} muestras · ${skipped} sin datos · ${totalSec}s`)
+          setLRProgress({ done: pollData.models_trained, total: pollData.models_trained, phase: 'done', eta: 0 })
           const { data: lrData } = await supabase.from('model_learned_params_intraday')
             .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
             .order('model_name')
@@ -1214,7 +1230,7 @@ export function IntradaySectionClient() {
                     style={{
                       background: trainLRStatus === 'training' ? 'var(--border)' : '#2563eb', color:'#fff',
                       border:'none', borderRadius:7, padding:'8px 18px', fontSize:12, fontWeight:700,
-                      cursor: trainLRStatus === 'training' ? 'default' : 'pointer',
+                      cursor: trainLRStatus === 'training' ? 'default' : 'pointer', flexShrink:0,
                     }}
                   >
                     {trainLRStatus === 'training' ? 'Entrenando...' : 'Entrenar modelos LR'}
@@ -1226,6 +1242,53 @@ export function IntradaySectionClient() {
                     <span style={{ fontSize:12, color:'#ef4444' }}>✗ {trainLRMsg}</span>
                   )}
                 </div>
+
+                {/* Progress bar — visible solo mientras entrena */}
+                {trainLRStatus === 'training' && (
+                  <div style={{ marginTop:12 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:5 }}>
+                      <span style={{ fontSize:12, color:'var(--text-muted)' }}>{trainLRMsg}</span>
+                      {lrProgress.eta != null && lrProgress.phase === 'training' && (
+                        <span style={{ fontSize:11, color:'var(--text-hint)', fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>
+                          ~{lrProgress.eta < 60
+                            ? `${lrProgress.eta}s`
+                            : `${Math.floor(lrProgress.eta / 60)}m ${lrProgress.eta % 60}s`} restantes
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ background:'var(--border)', borderRadius:99, height:8, overflow:'hidden' }}>
+                      {lrProgress.phase === 'fetching' ? (
+                        /* Indeterminate animation while fetching */
+                        <div style={{
+                          height:'100%', width:'30%', borderRadius:99,
+                          background:'linear-gradient(90deg, #2563eb 0%, #60a5fa 50%, #2563eb 100%)',
+                          backgroundSize:'200% 100%',
+                          animation:'lr-shimmer 1.5s infinite linear',
+                        }} />
+                      ) : (
+                        /* Determinate bar during training */
+                        <div style={{
+                          height:'100%', borderRadius:99, background:'#2563eb',
+                          width: lrProgress.total > 0
+                            ? `${Math.round(lrProgress.done / lrProgress.total * 100)}%`
+                            : '0%',
+                          transition:'width 0.4s ease',
+                        }} />
+                      )}
+                    </div>
+                    {lrProgress.phase === 'training' && lrProgress.total > 0 && (
+                      <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:4, textAlign:'right' }}>
+                        {lrProgress.done} / {lrProgress.total} modelos ({Math.round(lrProgress.done / lrProgress.total * 100)}%)
+                      </div>
+                    )}
+                  </div>
+                )}
+                <style>{`
+                  @keyframes lr-shimmer {
+                    0%   { background-position: 200% 0 }
+                    100% { background-position: -200% 0 }
+                  }
+                `}</style>
               </div>
 
               {/* LR Results visualization */}
