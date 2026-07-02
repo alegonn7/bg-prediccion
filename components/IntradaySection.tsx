@@ -45,6 +45,8 @@ interface LRParam {
   coefficients: number[]
   feature_names: string[]
   last_updated: string
+  signed_r2?: number | null
+  avg_actual_mag?: number | null
 }
 
 function isMarketOpen(): boolean {
@@ -749,6 +751,18 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
     grid.get(p.model_name)!.set(p.horizon_minutes, p)
   }
 
+  function r2Bg(r2: number | null) {
+    if (r2 == null) return 'transparent'
+    if (r2 >= 0.40) return '#15803d28'
+    if (r2 >= 0.20) return '#f59e0b14'
+    return '#ef444414'
+  }
+  function r2Col(r2: number | null) {
+    if (r2 == null) return 'var(--text-hint)'
+    if (r2 >= 0.40) return '#22c55e'
+    if (r2 >= 0.20) return '#f59e0b'
+    return '#ef4444'
+  }
   function cellBg(acc: number | null) {
     if (acc == null) return 'transparent'
     if (acc >= 0.65) return '#15803d28'
@@ -791,13 +805,14 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
       <div style={card({ padding:0, overflow:'hidden' })}>
         <div style={{ padding:'14px 20px 12px', display:'flex', justifyContent:'space-between', alignItems:'baseline', flexWrap:'wrap', gap:8 }}>
           <div>
-            <div style={{ fontSize:13, fontWeight:600 }}>Mapa de precisión LR · {params.length} combinaciones entrenadas</div>
+            <div style={{ fontSize:13, fontWeight:600 }}>Calidad del modelo firmado (signed R²) · {params.length} combinaciones</div>
+            <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:2 }}>R² = cuánta varianza del movimiento real explica el modelo · mayor = mejor predicción de magnitud</div>
             {lastTrained && <div style={{ fontSize:11, color:'var(--text-hint)', marginTop:3 }}>Último entrenamiento: {lastTrained}</div>}
           </div>
           <div style={{ display:'flex', gap:10, fontSize:11, color:'var(--text-hint)' }}>
-            <span style={{ color:'#22c55e' }}>■ ≥60%</span>
-            <span style={{ color:'#f59e0b' }}>■ 50–60%</span>
-            <span style={{ color:'#ef4444' }}>■ &lt;50%</span>
+            <span style={{ color:'#22c55e' }}>■ R²≥0.40</span>
+            <span style={{ color:'#f59e0b' }}>■ R²≥0.20</span>
+            <span style={{ color:'#ef4444' }}>■ R²&lt;0.20</span>
             <span>□ sin datos</span>
           </div>
         </div>
@@ -817,20 +832,29 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
                   <td style={td({ fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)", fontSize:11 })}>{model}</td>
                   {horizons.map(h => {
                     const p = grid.get(model)?.get(h)
+                    const r2  = p?.signed_r2 ?? null
                     const acc = p?.train_accuracy ?? null
-                    const blend = p ? Math.min(p.train_samples / 500, 0.7) : 0
+                    const mag = p?.avg_actual_mag ?? null
                     return (
-                      <td key={h} style={{ ...td({ textAlign:'center' }), background: cellBg(acc) }}>
+                      <td key={h} style={{ ...td({ textAlign:'center' }), background: r2 != null ? r2Bg(r2) : cellBg(acc) }}>
                         {p ? (
                           <div style={{ display:'flex', flexDirection:'column', gap:2, alignItems:'center' }}>
-                            <span style={{ fontWeight:700, color: cellCol(acc) }}>
-                              {(acc! * 100).toFixed(1)}%
-                            </span>
+                            {r2 != null ? (
+                              <span style={{ fontWeight:700, color: r2Col(r2), fontSize:13 }}>
+                                R²={r2.toFixed(2)}
+                              </span>
+                            ) : (
+                              <span style={{ fontWeight:700, color: cellCol(acc) }}>
+                                {(acc! * 100).toFixed(1)}%
+                              </span>
+                            )}
+                            {mag != null && (
+                              <span style={{ fontSize:10, color:'var(--text-muted)' }}>
+                                mov real {mag.toFixed(2)}%
+                              </span>
+                            )}
                             <span style={{ fontSize:10, color:'var(--text-hint)' }}>
-                              {p.train_samples} muestras
-                            </span>
-                            <span style={{ fontSize:10, color:'#6366f1' }}>
-                              LR influye {(blend * 100).toFixed(0)}%
+                              dir {acc != null ? `${(acc * 100).toFixed(0)}%` : '—'} · {p.train_samples}n
                             </span>
                           </div>
                         ) : <span style={{ color:'var(--text-hint)' }}>—</span>}
@@ -843,8 +867,10 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
           </table>
         </div>
         <div style={{ padding:'10px 20px 12px', borderTop:'1px solid var(--border)', fontSize:11, color:'var(--text-hint)' }}>
-          <b style={{ color:'#6366f1' }}>LR influye X%</b> = cuánto pesa la RL en la confianza final vs el score base.
-          Aumenta con más datos (máx. 70% con ≥500 muestras).
+          <b>R²</b> = el modelo firmado explica R²×100% de la varianza del movimiento real.
+          Verde ≥0.40 · Amarillo ≥0.20 · Rojo &lt;0.20.
+          <b style={{ marginLeft:8 }}>mov real</b> = movimiento medio histórico para ese horizonte (referencia de magnitud).
+          <b style={{ marginLeft:8 }}>dir %</b> = precisión de dirección (métrica secundaria).
         </div>
       </div>
 
@@ -928,7 +954,7 @@ export function IntradaySectionClient() {
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
         .order('direction_accuracy', { ascending: false, nullsFirst: false }),
       supabase.from('model_learned_params_intraday')
-        .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated')
+        .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated, signed_r2, avg_actual_mag')
         .order('model_name'),
     ])
     setOpen((openData ?? []) as IntraConsensus[])
@@ -1067,6 +1093,12 @@ export function IntradaySectionClient() {
   const closedToday = closed.filter(p => (p.closed_at ?? '').startsWith(today))
   const hitsToday   = closedToday.filter(p => p.direction_correct === true).length
   const accToday    = closedToday.length > 0 ? Math.round(hitsToday / closedToday.length * 100) : null
+  const magMaesToday = closedToday
+    .filter(p => p.actual_pct != null && p.final_pct_predicted != null)
+    .map(p => Math.abs(Math.abs(p.actual_pct!) - Math.abs(p.final_pct_predicted)))
+  const magMaeToday = magMaesToday.length > 0
+    ? magMaesToday.reduce((s, v) => s + v, 0) / magMaesToday.length
+    : null
 
   const tabBtn = (t: TabView): React.CSSProperties => ({
     background: tab === t ? 'var(--text)' : 'var(--card)', color: tab === t ? 'var(--bg)' : 'var(--text-muted)',
@@ -1088,9 +1120,21 @@ export function IntradaySectionClient() {
             {marketOpen ? 'Mercado abierto' : 'Mercado cerrado'}
           </div>
           {lastRefresh && <span style={{ fontSize:11, color:'var(--text-hint)' }}>{lastRefresh.toLocaleTimeString('es-AR')}</span>}
-          {accToday != null && (
-            <span style={{ fontSize:12, background:'var(--card)', border:'1px solid var(--border)', borderRadius:7, padding:'4px 12px' }}>
-              Hoy: <strong style={{ color: accToday >= 60 ? '#22c55e' : accToday < 40 ? '#ef4444' : 'var(--text)' }}>{hitsToday}/{closedToday.length} ({accToday}%)</strong>
+          {closedToday.length > 0 && (
+            <span style={{ fontSize:12, background:'var(--card)', border:'1px solid var(--border)', borderRadius:7, padding:'4px 12px', display:'flex', gap:10, alignItems:'center' }}>
+              {magMaeToday != null && (
+                <span>
+                  MAE hoy:{' '}
+                  <strong style={{ color: magMaeToday <= 0.25 ? '#22c55e' : magMaeToday <= 0.5 ? '#f59e0b' : '#ef4444' }}>
+                    {magMaeToday.toFixed(2)}%
+                  </strong>
+                </span>
+              )}
+              {accToday != null && (
+                <span style={{ color:'var(--text-hint)', fontSize:11 }}>
+                  dir {hitsToday}/{closedToday.length} ({accToday}%)
+                </span>
+              )}
             </span>
           )}
         </div>
@@ -1144,34 +1188,39 @@ export function IntradaySectionClient() {
 
               {/* LR vs observed accuracy comparison */}
               {lrParams.length > 0 && (() => {
-                // Compute observed accuracy per model from modelPreds
-                const obsMap = new Map<string, { correct: number; total: number }>()
+                // Compute observed MAE per model from modelPreds
+                const obsMap = new Map<string, { maes: number[]; total: number }>()
                 for (const p of analysisModelPreds) {
                   const key = p.model_name
-                  if (!obsMap.has(key)) obsMap.set(key, { correct:0, total:0 })
+                  if (!obsMap.has(key)) obsMap.set(key, { maes: [], total: 0 })
                   const e = obsMap.get(key)!
                   e.total++
-                  if (p.direction_correct === true) e.correct++
+                  if (p.mae != null) e.maes.push(Number(p.mae))
                 }
-                // Average LR accuracy per model (across horizons)
-                const lrMap = new Map<string, number[]>()
+                // Average signed_r2 per model (across horizons)
+                const r2Map = new Map<string, number[]>()
                 for (const p of lrParams) {
-                  if (!lrMap.has(p.model_name)) lrMap.set(p.model_name, [])
-                  lrMap.get(p.model_name)!.push(p.train_accuracy)
+                  if (p.signed_r2 == null) continue
+                  if (!r2Map.has(p.model_name)) r2Map.set(p.model_name, [])
+                  r2Map.get(p.model_name)!.push(p.signed_r2)
                 }
-                const models = [...new Set([...obsMap.keys(), ...lrMap.keys()])].sort()
+                const models = [...new Set([...obsMap.keys(), ...r2Map.keys()])].sort()
+                // For bar normalization, find max MAE
+                const maxMae = Math.max(...[...obsMap.values()].map(e => e.maes.length > 0 ? e.maes.reduce((s, v) => s + v, 0) / e.maes.length : 0), 1)
                 return (
                   <div style={card()}>
-                    <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Precisión observada vs precisión LR entrenada</div>
+                    <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>MAE observado vs calidad del modelo (R²)</div>
                     <div style={{ fontSize:11, color:'var(--text-hint)', marginBottom:14 }}>
-                      Comparación entre la precisión real de cada modelo en el período seleccionado y la precisión del modelo LR entrenado con datos históricos.
+                      MAE observado = error medio de magnitud en el período seleccionado (menor = mejor).
+                      R² entrenado = qué tan bien el modelo firmado explica los movimientos históricos.
                     </div>
                     <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                       {models.map(model => {
-                        const obs     = obsMap.get(model)
-                        const obsAcc  = obs && obs.total > 0 ? obs.correct / obs.total : null
-                        const lrAcArr = lrMap.get(model)
-                        const lrAcc   = lrAcArr ? lrAcArr.reduce((s, v) => s + v, 0) / lrAcArr.length : null
+                        const obs    = obsMap.get(model)
+                        const obsMae = obs && obs.maes.length > 0 ? obs.maes.reduce((s, v) => s + v, 0) / obs.maes.length : null
+                        const r2Arr  = r2Map.get(model)
+                        const r2     = r2Arr ? r2Arr.reduce((s, v) => s + v, 0) / r2Arr.length : null
+                        const maeColor = obsMae == null ? 'var(--text-hint)' : obsMae <= 0.25 ? '#22c55e' : obsMae <= 0.5 ? '#f59e0b' : '#ef4444'
                         return (
                           <div key={model} style={{ display:'flex', flexDirection:'column', gap:4 }}>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
@@ -1179,21 +1228,21 @@ export function IntradaySectionClient() {
                               <span style={{ fontSize:10, color:'var(--text-hint)' }}>{obs?.total ?? 0} predicciones</span>
                             </div>
                             <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>Observada</span>
+                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>MAE observado</span>
                               <div style={{ flex:1, background:'var(--border)', borderRadius:3, height:10, overflow:'hidden' }}>
-                                {obsAcc != null && <div style={{ width:`${obsAcc * 100}%`, height:'100%', background: obsAcc >= 0.60 ? '#22c55e' : obsAcc >= 0.50 ? '#f59e0b' : '#ef4444', borderRadius:3 }} />}
+                                {obsMae != null && <div style={{ width:`${Math.min(obsMae / maxMae, 1) * 100}%`, height:'100%', background: maeColor, borderRadius:3 }} />}
                               </div>
-                              <span style={{ fontSize:11, fontWeight:700, width:40, textAlign:'right', color: obsAcc != null && obsAcc >= 0.60 ? '#22c55e' : obsAcc != null && obsAcc < 0.50 ? '#ef4444' : '#f59e0b' }}>
-                                {obsAcc != null ? `${(obsAcc*100).toFixed(0)}%` : '—'}
+                              <span style={{ fontSize:11, fontWeight:700, width:50, textAlign:'right', color: maeColor }}>
+                                {obsMae != null ? `${obsMae.toFixed(2)}%` : '—'}
                               </span>
                             </div>
                             <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>LR entrenada</span>
+                              <span style={{ fontSize:10, color:'var(--text-muted)', width:90, flexShrink:0 }}>R² entrenado</span>
                               <div style={{ flex:1, background:'var(--border)', borderRadius:3, height:10, overflow:'hidden' }}>
-                                {lrAcc != null && <div style={{ width:`${lrAcc * 100}%`, height:'100%', background:'#6366f1', borderRadius:3, opacity:0.8 }} />}
+                                {r2 != null && <div style={{ width:`${Math.max(0, r2) * 100}%`, height:'100%', background:'#6366f1', borderRadius:3, opacity:0.8 }} />}
                               </div>
-                              <span style={{ fontSize:11, fontWeight:700, width:40, textAlign:'right', color:'#6366f1' }}>
-                                {lrAcc != null ? `${(lrAcc*100).toFixed(0)}%` : '—'}
+                              <span style={{ fontSize:11, fontWeight:700, width:50, textAlign:'right', color:'#6366f1' }}>
+                                {r2 != null ? r2.toFixed(2) : '—'}
                               </span>
                             </div>
                           </div>
@@ -1201,8 +1250,9 @@ export function IntradaySectionClient() {
                       })}
                     </div>
                     <div style={{ marginTop:12, fontSize:11, color:'var(--text-hint)', display:'flex', gap:16 }}>
-                      <span><span style={{ color:'#22c55e' }}>■</span> Observada ≥60%</span>
-                      <span><span style={{ color:'#6366f1' }}>■</span> LR entrenada (histórico completo)</span>
+                      <span><span style={{ color:'#22c55e' }}>■</span> MAE ≤0.25% (muy preciso)</span>
+                      <span><span style={{ color:'#f59e0b' }}>■</span> MAE ≤0.5%</span>
+                      <span><span style={{ color:'#6366f1' }}>■</span> R² del modelo firmado (0→1)</span>
                     </div>
                   </div>
                 )
@@ -1257,33 +1307,36 @@ export function IntradaySectionClient() {
                     <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                       <thead>
                         <tr>
-                          {['#','Modelo','Peso','Precisión','Muestras','MAE medio','Barra precisión'].map((h, i) => (
-                            <th key={h} style={{ ...th, textAlign: i <= 1 ? 'left' : 'center' }}>{h}</th>
+                          {['#','Modelo','MAE medio','Precisión dir.','Peso','Muestras'].map((h, i) => (
+                            <th key={h} style={{ ...th, textAlign: i <= 1 ? 'left' : 'center', ...(h === 'MAE medio' ? { color:'#f59e0b' } : {}) }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {[...modelWeights].sort((a, b) => (b.direction_accuracy ?? 0) - (a.direction_accuracy ?? 0)).map((w, i) => {
+                        {[...modelWeights].sort((a, b) => {
+                          const mA = a.mae_avg != null ? Number(a.mae_avg) : Infinity
+                          const mB = b.mae_avg != null ? Number(b.mae_avg) : Infinity
+                          return mA - mB
+                        }).map((w, i) => {
                           const wNum = Number(w.weight)
                           const acc  = w.direction_accuracy != null ? Number(w.direction_accuracy) : null
+                          const mae  = w.mae_avg != null ? Number(w.mae_avg) : null
                           const wColor = wNum > 1.3 ? '#22c55e' : wNum < 0.7 ? '#ef4444' : 'var(--text)'
+                          const maeColor = mae == null ? 'var(--text-hint)' : mae <= 0.25 ? '#22c55e' : mae <= 0.5 ? '#f59e0b' : '#ef4444'
                           return (
                             <tr key={w.model_name} style={{ borderBottom:'1px solid var(--border)' }}>
                               <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
                               <td style={td({ fontWeight:700, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>{w.model_name}</td>
+                              <td style={td({ textAlign:'center', fontWeight:700, color: maeColor, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
+                                {mae != null ? `${mae.toFixed(3)}%` : '—'}
+                              </td>
+                              <td style={td({ textAlign:'center', color: accColor(acc) })}>
+                                {acc != null ? `${(acc * 100).toFixed(1)}%` : '—'}
+                              </td>
                               <td style={td({ textAlign:'center', fontWeight:700, color: wColor, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
                                 {wNum.toFixed(3)}
                               </td>
-                              <td style={td({ textAlign:'center', fontWeight:700, color: accColor(acc) })}>
-                                {acc != null ? `${(acc * 100).toFixed(1)}%` : '—'}
-                              </td>
                               <td style={td({ textAlign:'center', color:'var(--text-muted)' })}>{w.sample_size}</td>
-                              <td style={td({ textAlign:'center', color:'var(--text-muted)', fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
-                                {w.mae_avg != null ? `${Number(w.mae_avg).toFixed(3)}%` : '—'}
-                              </td>
-                              <td style={td({ minWidth:120 })}>
-                                <MiniBar pct={acc ?? 0} color={acc != null && acc >= 0.6 ? '#22c55e' : acc != null && acc < 0.4 ? '#ef4444' : '#f59e0b'} />
-                              </td>
                             </tr>
                           )
                         })}
@@ -1301,15 +1354,16 @@ export function IntradaySectionClient() {
 
               {/* LR Training */}
               <div style={card()}>
-                <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Entrenamiento ML — Regresión Logística</div>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Entrenamiento ML — Modelo firmado (magnitud + dirección)</div>
                 <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7, marginBottom:12 }}>
-                  Entrena un modelo LR independiente por cada combinación <b>modelo × horizonte</b> (hasta 39 combinaciones).
-                  Aprende qué condiciones del mercado hacen que cada modelo sea confiable, usando las predicciones cerradas como datos de entrenamiento.
+                  Entrena un <b>Ridge regression firmado</b> por cada horizonte (60, 120, 240 min).
+                  Predice directamente el <b>% de movimiento con signo</b> (positivo = sube, negativo = baja),
+                  de forma que dirección y magnitud salen del mismo modelo.
                   <br />
                   <span style={{ color:'var(--text-hint)' }}>
                     Features: 13 scores + RSI, VWAP, Bollinger, volumen, momentum, ATR, minutos transcurridos.
-                    La confianza calibrada se incorpora gradualmente (aumenta con más datos).
-                    Mínimo 20 muestras por modelo×horizonte para entrenar.
+                    Mínimo 20 muestras por horizonte para entrenar.
+                    La métrica clave es R² (cuánta varianza del movimiento real explica el modelo).
                   </span>
                 </div>
                 <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
@@ -1322,7 +1376,7 @@ export function IntradaySectionClient() {
                       cursor: trainLRStatus === 'training' ? 'default' : 'pointer', flexShrink:0,
                     }}
                   >
-                    {trainLRStatus === 'training' ? 'Entrenando...' : 'Entrenar modelos LR'}
+                    {trainLRStatus === 'training' ? 'Entrenando...' : 'Entrenar modelo firmado (MAE)'}
                   </button>
                   {trainLRStatus === 'done' && (
                     <span style={{ fontSize:12, color:'#22c55e' }}>✓ {trainLRMsg}</span>
