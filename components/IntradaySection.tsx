@@ -972,33 +972,42 @@ export function IntradaySectionClient() {
   const [lrParams, setLRParams]             = useState<LRParam[]>([])
   const marketOpen = isMarketOpen()
 
-  const load = useCallback(async () => {
-    const [{ data: openData }, { data: closedData }, { data: mpData }, { data: weightsData }, { data: lrData }] = await Promise.all([
+  // Light poll: open predictions + recent closed + weights — runs every 2 minutes
+  const loadLight = useCallback(async () => {
+    const [{ data: openData }, { data: closedData }, { data: weightsData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
         .select('*, assets(ticker, name)').eq('status','open')
-        .order('created_at', { ascending: false }).limit(500),
+        .order('created_at', { ascending: false }).limit(300),
       supabase.from('consensus_predictions_intraday')
         .select('*, assets(ticker, name)').eq('status','closed')
-        .order('closed_at', { ascending: false }).limit(2000),
-      supabase.from('model_predictions_intraday')
-        .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, assets!asset_id(ticker)')
-        .eq('status','closed').not('direction_correct','is',null).limit(5000),
+        .order('closed_at', { ascending: false }).limit(500),
       supabase.from('model_weights_intraday')
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
         .order('direction_accuracy', { ascending: false, nullsFirst: false }),
+    ])
+    setOpen((openData ?? []) as IntraConsensus[])
+    setClosed((closedData ?? []) as IntraConsensus[])
+    setModelWeights((weightsData ?? []) as ModelWeightIntraday[])
+    setLastRefresh(new Date()); setLoading(false)
+  }, [])
+
+  // Heavy load: individual model preds + LR params — only fetched when analysis/modelos tab is open
+  const loadHeavy = useCallback(async () => {
+    const [{ data: mpData }, { data: lrData }] = await Promise.all([
+      supabase.from('model_predictions_intraday')
+        .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, assets!asset_id(ticker)')
+        .eq('status','closed').not('direction_correct','is',null).limit(1000),
       supabase.from('model_learned_params_intraday')
         .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated, signed_r2, avg_actual_mag')
         .order('model_name'),
     ])
-    setOpen((openData ?? []) as IntraConsensus[])
-    setClosed((closedData ?? []) as IntraConsensus[])
     setModelPreds((mpData ?? []) as unknown as ModelPred[])
-    setModelWeights((weightsData ?? []) as ModelWeightIntraday[])
     setLRParams((lrData ?? []) as LRParam[])
-    setLastRefresh(new Date()); setLoading(false)
   }, [])
 
-  useEffect(() => { load(); const id = setInterval(load, 30000); return () => clearInterval(id) }, [load])
+  // Poll light data every 2 minutes; lazy-load heavy data only when needed tabs are activated
+  useEffect(() => { loadLight(); const id = setInterval(loadLight, 120000); return () => clearInterval(id) }, [loadLight])
+  useEffect(() => { if (tab === 'analysis' || tab === 'modelos') loadHeavy() }, [tab, loadHeavy])
   useEffect(() => setPage(0), [filters, tab])
 
   // Filtered data for analysis tab based on selected period
@@ -1031,12 +1040,12 @@ export function IntradaySectionClient() {
   async function recalcWeights() {
     setRecalculating(true)
     await callFn('juez-intraday', {})
-    await load()
+    await loadLight()
     setRecalculating(false)
   }
 
   async function triggerNow() {
-    setTriggering(true); await callFn('crear-prediccion-intraday', {}); await load(); setTriggering(false)
+    setTriggering(true); await callFn('crear-prediccion-intraday', {}); await loadLight(); setTriggering(false)
   }
 
   async function trainLRModels() {
@@ -1179,7 +1188,7 @@ export function IntradaySectionClient() {
 
       {showConfig && (
         <div style={card()}>
-          <AssetSelector onSave={load} />
+          <AssetSelector onSave={loadLight} />
         </div>
       )}
 
