@@ -49,11 +49,21 @@ interface LRParam {
   avg_actual_mag?: number | null
 }
 
+const US_MARKET_HOLIDAYS = new Set([
+  // 2026
+  '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
+  '2026-07-03','2026-09-07','2026-11-26','2026-12-25',
+  // 2027
+  '2027-01-01','2027-01-18','2027-02-15','2027-03-26','2027-05-31',
+  '2027-07-05','2027-09-06','2027-11-25','2027-12-24',
+])
+
 function isMarketOpen(): boolean {
   const now  = new Date()
-  const mins = now.getUTCHours() * 60 + now.getUTCMinutes()
   const day  = now.getUTCDay()
   if (day === 0 || day === 6) return false
+  if (US_MARKET_HOLIDAYS.has(now.toISOString().slice(0, 10))) return false
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes()
   return mins >= 810 && mins < 1200
 }
 
@@ -221,7 +231,16 @@ function FiltersBar({ filters, onChange }: { filters: Filters; onChange: (f: Fil
 // ── Predictions table ──────────────────────────────────────────────────────────
 function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?: boolean }) {
   const hasClosed = preds.some(p => p.actual_pct != null)
-  const headers = ['Ticker','Dirección','Horizonte','Pred %','Real %', hasClosed ? 'Δ Magnitud' : null, 'Acuerdo', showStatus ? 'Dir.' : 'Cierra en'].filter(Boolean) as string[]
+  const showPrices = !showStatus
+  const headers = [
+    'Ticker', 'Dirección', 'Horizonte',
+    showPrices ? 'Precio actual' : null,
+    showPrices ? 'Target' : null,
+    'Pred %', 'Real %',
+    hasClosed ? 'Δ Magnitud' : null,
+    'Acuerdo',
+    showStatus ? 'Dir.' : 'Cierra en',
+  ].filter(Boolean) as string[]
   return (
     <div style={{ overflowX:'auto' }}>
       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
@@ -238,11 +257,25 @@ function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?
               ? Math.abs(Math.abs(p.actual_pct) - Math.abs(p.final_pct_predicted))
               : null
             const magErrColor = magErr == null ? 'var(--text-hint)' : magErr <= 0.25 ? '#22c55e' : magErr <= 0.5 ? '#f59e0b' : '#ef4444'
+            const targetPrice = p.price_at_creation != null && p.final_pct_predicted != null
+              ? p.price_at_creation * (1 + p.final_pct_predicted / 100)
+              : null
+            const targetColor = p.final_pct_predicted >= 0 ? '#22c55e' : '#ef4444'
             return (
               <tr key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
                 <td style={td({ fontWeight:700, ...mono })}>{p.assets?.ticker ?? '?'}</td>
                 <td style={td()}><DirChip d={p.direction} correct={p.direction_correct} /></td>
                 <td style={td({ textAlign:'center' })}><span style={{ background:'var(--border)', borderRadius:4, padding:'1px 6px', fontSize:11, ...mono }}>{p.horizon_minutes}m</span></td>
+                {showPrices && (
+                  <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>
+                    {p.price_at_creation != null ? `$${p.price_at_creation.toFixed(2)}` : '—'}
+                  </td>
+                )}
+                {showPrices && (
+                  <td style={td({ textAlign:'center', ...mono, fontWeight:700, color: targetColor })}>
+                    {targetPrice != null ? `$${targetPrice.toFixed(2)}` : '—'}
+                  </td>
+                )}
                 <td style={td({ textAlign:'center', ...mono })}>{p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted?.toFixed(2)}%</td>
                 <td style={td({ textAlign:'center', ...mono })}>
                   {p.actual_pct != null

@@ -218,7 +218,7 @@ async function getData() {
       .eq('status', 'closed')
       .not('direction_correct', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(5000),
+      .limit(1000),
 
     supabase
       .from('backtest_runs')
@@ -238,7 +238,7 @@ async function getData() {
     supabase
       .from('backtest_stats')
       .select('model_name, horizon_bucket, correct_count, total_count, brier_sum, brier_count, mae_sum, mae_count')
-      .limit(10000),
+      .limit(2000),
 
     supabase
       .from('model_changelog')
