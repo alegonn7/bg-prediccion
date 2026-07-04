@@ -2,7 +2,7 @@
 import { useState, useMemo } from 'react'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
-const DAILY_BUCKETS = [7, 14, 30, 60, 90]
+const DAILY_BUCKETS = [1, 7, 14, 30, 60, 90]
 const PAGE_SIZE = 10
 
 type ClosedPred = {
