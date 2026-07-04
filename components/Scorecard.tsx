@@ -1,234 +1,244 @@
 import React from 'react'
 
+const MONO   = "var(--font-mono, 'IBM Plex Mono', monospace)"
+const CYCLES = 400
+
 type ModelWeight = {
-  model_name: string
-  weight: number | null
-  direction_accuracy: number | null
-  sample_size: number | null
-  mae_avg: number | null
+  model_name: string; weight: number | null
+  direction_accuracy: number | null; sample_size: number | null; mae_avg: number | null
 }
 
-const TARGET = 400
-const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
+type G = { n: number; ok: number; acc: number | null; mae: number | null }
 
-function computeGroup(preds: any[]) {
-  const evaled = preds.filter((p: any) => p.direction_correct !== null)
-  const n   = evaled.length
-  const ok  = evaled.filter((p: any) => p.direction_correct).length
-  const maePs = evaled.filter((p: any) => p.actual_final_pct != null && p.final_pct_predicted != null)
-  const mae   = maePs.length > 0
+function computeGroup(preds: any[]): G {
+  const evaled  = preds.filter((p: any) => p.direction_correct !== null)
+  const n       = evaled.length
+  const ok      = evaled.filter((p: any) => p.direction_correct).length
+  const maePs   = evaled.filter((p: any) => p.actual_final_pct != null && p.final_pct_predicted != null)
+  const mae     = maePs.length > 0
     ? maePs.reduce((s: number, p: any) => s + Math.abs(Number(p.actual_final_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
     : null
   return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae }
 }
 
-function maeColor(v: number) {
-  if (v <= 1.5) return '#22c55e'
-  if (v <= 3.5) return '#ca8a04'
+function dirColor(v: number, target: number) {
+  if (v >= target) return '#22c55e'
+  if (v >= 54)     return '#d97706'
   return '#ef4444'
 }
-function dirColor(v: number) {
-  if (v >= 65) return '#22c55e'
-  if (v >= 53) return '#ca8a04'
+function maeColor(v: number, target: number) {
+  if (v <= target)         return '#22c55e'
+  if (v <= target * 1.75)  return '#d97706'
   return '#ef4444'
 }
 
-function getVerdict(total: number, hits: number, mae: number | null) {
-  const acc = total > 0 ? hits / total : null
-  if (total === 0) return {
-    status: 'Indeterminado', dotColor: 'var(--text-hint)',
-    title: 'Todavía no hay datos.',
-    body: 'El sistema aún no tiene predicciones de consenso cerradas. Volvé cuando las haya.',
+function verdict(g: G, dirTarget: number, maeTarget: number, isDaily: boolean) {
+  if (g.n === 0) return {
+    dot: 'var(--text-hint)', badge: 'Sin datos aún',
+    title: 'Todavía no hay predicciones cerradas evaluadas.',
+    body: isDaily
+      ? 'Las predicciones se cierran cuando vence su horizonte. Aparecerán aquí automáticamente.'
+      : 'Las predicciones intradiarias se evalúan al cierre del mismo día. Volvé mañana.',
   }
-  if (total < 20) return {
-    status: 'Indeterminado', dotColor: 'var(--text-hint)',
-    title: 'Todavía no se puede concluir nada.',
-    body: `Con solo ${total} predicciones, cualquier resultado es ruido estadístico. Hacen falta decenas de ciclos cerrados.`,
+  if (g.n < 15) return {
+    dot: 'var(--text-hint)', badge: 'Datos insuficientes',
+    title: `Solo ${g.n} predicción${g.n > 1 ? 'es' : ''} cerrada${g.n > 1 ? 's' : ''} — aún no se puede concluir nada.`,
+    body: 'Hacen falta al menos 15 ciclos para filtrar el ruido estadístico y ver si hay una tendencia real.',
   }
-  const accPct = Math.round((acc ?? 0) * 100)
-  const maeText = mae !== null ? ` El error promedio de magnitud es ±${mae.toFixed(1)}%.` : ''
-  if (accPct >= 60) return {
-    status: 'Positivo', dotColor: 'var(--up)',
-    title: '¡El ensamble muestra una ventaja real!',
-    body: `${accPct}% de acierto de dirección en ${total} predicciones de consenso. Supera claramente el ~54% del baseline.${maeText}`,
+  const acc = g.acc!
+  const maeOk  = g.mae !== null && g.mae  <= maeTarget
+  const maeNok = g.mae !== null && g.mae  >  maeTarget * 1.75
+
+  if (acc >= dirTarget && maeOk) return {
+    dot: '#22c55e', badge: 'Funcionando bien',
+    title: '¡El sistema supera todos sus objetivos!',
+    body: `Acertamos la dirección el ${acc.toFixed(0)}% de las veces (meta ${dirTarget}%) y la magnitud tiene un error promedio de ±${g.mae!.toFixed(1)}% (meta <${maeTarget}%). Claramente por encima del baseline del 54%.`,
   }
-  if (accPct >= 54) return {
-    status: 'Señal débil', dotColor: '#d97706',
-    title: 'Hay una señal positiva, pero todavía débil.',
-    body: `${accPct}% de acierto en ${total} predicciones. Por encima del baseline pero todavía puede ser suerte con pocos datos.${maeText}`,
+  if (acc >= dirTarget) return {
+    dot: '#22c55e', badge: 'Dirección lograda',
+    title: `Acertamos la dirección — la magnitud todavía tiene margen de mejora.`,
+    body: `${acc.toFixed(0)}% de acierto en dirección (meta ${dirTarget}%). El error de magnitud es ±${g.mae?.toFixed(1) ?? '—'}% contra un objetivo de <${maeTarget}%.`,
+  }
+  if (acc >= 54) return {
+    dot: '#d97706', badge: 'Señal positiva',
+    title: 'Hay una ventaja sobre el baseline, pero todavía no alcanzamos el objetivo.',
+    body: `${acc.toFixed(0)}% de acierto en dirección — por encima del 54% del baseline, pero el objetivo son ${dirTarget}%.${g.mae !== null ? ` El error de magnitud promedio es ±${g.mae.toFixed(1)}%.` : ''}`,
   }
   return {
-    status: 'Sin señal', dotColor: 'var(--text-muted)',
-    title: 'Por ahora no supera el mercado.',
-    body: `${accPct}% de acierto en ${total} predicciones. El ensamble no muestra ventaja clara todavía.${maeText}`,
+    dot: '#ef4444', badge: 'Sin ventaja clara',
+    title: 'Por ahora el sistema no supera al mercado.',
+    body: `${acc.toFixed(0)}% de acierto en dirección — sin superar el baseline del 54%. Se necesitan más datos y posiblemente ajustes al modelo.`,
   }
 }
 
-function StatRow({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-      <span style={{ flex: 1, fontSize: 13, color: 'var(--text-muted)' }}>{label}</span>
-      <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: color ?? 'var(--text)' }}>{value}</span>
-      {sub && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', minWidth: 60, textAlign: 'right' }}>{sub}</span>}
-    </div>
-  )
-}
+// ─── Sub-component: one type block ───────────────────────────────────────────
 
-function GroupBlock({ title, g }: { title: string; g: ReturnType<typeof computeGroup> }) {
+function TypeCard({
+  typeLabel, horizonNote, g, dirTarget, maeTarget, totalCycles, isDaily,
+}: {
+  typeLabel: string; horizonNote: string; g: G
+  dirTarget: number; maeTarget: number; totalCycles: number; isDaily: boolean
+}) {
+  const v         = verdict(g, dirTarget, maeTarget, isDaily)
+  const progress  = Math.min(100, (totalCycles / CYCLES) * 100)
+  const hasData   = g.n >= 1
+
   return (
-    <div style={{ flex: 1 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 14 }}>
-        {title}
-      </div>
-      {g.n === 0 ? (
-        <div style={{ fontSize: 13, color: 'var(--text-hint)' }}>Sin datos todavía</div>
-      ) : (
-        <div>
-          <div style={{ marginBottom: 4 }}>
-            <div style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, color: g.acc !== null ? dirColor(g.acc) : 'var(--text-hint)', letterSpacing: '-0.01em' }}>
-              {g.acc !== null ? `${g.acc.toFixed(0)}%` : '—'}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              acertó dirección · {g.ok} de {g.n}
-            </div>
+    <div style={{
+      background: 'var(--bg-card)', border: '1px solid var(--border)',
+      borderRadius: 14, boxShadow: 'var(--shadow)', overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '20px 28px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 3 }}>
+            {horizonNote}
           </div>
-          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-            <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 600, color: g.mae !== null ? maeColor(g.mae) : 'var(--text-hint)' }}>
-              {g.mae !== null ? `±${g.mae.toFixed(2)}%` : '—'}
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              error medio de magnitud
-            </div>
-            {g.mae !== null && (
-              <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 6, lineHeight: 1.55 }}>
-                Cuando predecimos un movimiento, en promedio nos alejamos{' '}
-                <span style={{ fontFamily: MONO, fontWeight: 600 }}>±{g.mae.toFixed(1)} puntos</span> del valor real.
-              </div>
-            )}
-          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.01em' }}>{typeLabel}</div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 999, background: 'var(--bg-muted)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.dot, display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.07em', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{v.badge}</span>
+        </div>
+      </div>
+
+      {/* Verdict */}
+      <div style={{ padding: '24px 28px', borderBottom: '1px solid var(--border)' }}>
+        <h3 style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em', lineHeight: 1.3, margin: '0 0 10px', maxWidth: 620 }}>{v.title}</h3>
+        <p style={{ fontSize: 14, lineHeight: 1.65, color: 'var(--text-muted)', margin: 0, maxWidth: 620 }}>{v.body}</p>
+      </div>
+
+      {hasData && (
+        <>
+          {/* Metrics */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid var(--border)' }}>
+            {/* Direction */}
+            <div style={{ padding: '24px 28px', borderRight: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 14 }}>
+                Dirección · sube o baja
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 36, fontWeight: 700, letterSpacing: '-0.02em', color: g.acc !== null ? dirColor(g.acc, dirTarget) : 'var(--text-hint)', marginBottom: 4 }}>
+                {g.acc !== null ? `${g.acc.toFixed(0)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                acertamos {g.ok} de {g.n} predicciones
+              </div>
+
+              {/* Bar with markers */}
+              <div style={{ position: 'relative', height: 10, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'visible', marginBottom: 10 }}>
+                {g.acc !== null && (
+                  <div style={{
+                    height: '100%', width: `${Math.min(g.acc, 100)}%`,
+                    background: dirColor(g.acc, dirTarget), borderRadius: 999, opacity: 0.8,
+                  }} />
+                )}
+                {/* Baseline marker */}
+                <div style={{ position: 'absolute', top: -2, left: '54%', width: 2, height: 14, background: 'var(--text-muted)', borderRadius: 1 }} />
+                {/* Target marker */}
+                <div style={{ position: 'absolute', top: -2, left: `${dirTarget}%`, width: 2, height: 14, background: '#22c55e', borderRadius: 1 }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>
+                <span>Baseline: 54%</span>
+                <span style={{ color: '#22c55e' }}>Meta: {dirTarget}%</span>
+              </div>
+            </div>
+
+            {/* MAE */}
+            <div style={{ padding: '24px 28px' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 14 }}>
+                Magnitud · ¿cuánto?
+              </div>
+              {g.mae !== null ? (
+                <>
+                  <div style={{ fontFamily: MONO, fontSize: 36, fontWeight: 700, letterSpacing: '-0.02em', color: maeColor(g.mae, maeTarget), marginBottom: 4 }}>
+                    ±{g.mae.toFixed(2)}%
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+                    error medio de magnitud
+                  </div>
+                  {/* MAE bar (lower = better; scale 0–6%) */}
+                  <div style={{ position: 'relative', height: 10, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'visible', marginBottom: 10 }}>
+                    <div style={{
+                      height: '100%', width: `${Math.min(g.mae / 6 * 100, 100)}%`,
+                      background: maeColor(g.mae, maeTarget), borderRadius: 999, opacity: 0.8,
+                    }} />
+                    {/* Target marker */}
+                    <div style={{ position: 'absolute', top: -2, left: `${maeTarget / 6 * 100}%`, width: 2, height: 14, background: '#22c55e', borderRadius: 1 }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>
+                    <span>0% (perfecto)</span>
+                    <span style={{ color: '#22c55e' }}>Meta: &lt;{maeTarget}%</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 12, lineHeight: 1.55 }}>
+                    Cuando predecimos "sube 3%", en promedio el número real queda a{' '}
+                    <strong>±{g.mae.toFixed(1)} puntos</strong> de lo que dijimos.
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--text-hint)' }}>
+                  No hay datos de magnitud todavía — se necesita que las predicciones incluyan un valor esperado.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Progress */}
+          <div style={{ padding: '16px 28px', display: 'flex', alignItems: 'center', gap: 20 }}>
+            <div style={{ flex: 1, maxWidth: 400 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', marginBottom: 7 }}>
+                <span>{g.n} ciclos evaluados de {CYCLES} necesarios</span>
+                <span>{Math.min(g.n / CYCLES * 100, 100).toFixed(1)}%</span>
+              </div>
+              <div style={{ height: 6, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${Math.max(0.5, Math.min(g.n / CYCLES * 100, 100))}%`, background: 'var(--text-muted)', borderRadius: 999 }} />
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   )
 }
 
+// ─── Main export ─────────────────────────────────────────────────────────────
+
 export function ScorecardSection({
   modelWeights, hits, total, closedPreds = [],
 }: {
-  modelWeights: ModelWeight[]
-  hits: number
-  total: number
-  closedPreds?: any[]
+  modelWeights: ModelWeight[]; hits: number; total: number; closedPreds?: any[]
 }) {
-  const acc    = total > 0 ? hits / total : null
-  const accPct = acc !== null ? Math.round(acc * 100) : null
-  const basePct  = 54
-  const progress = Math.max(0.6, (total / TARGET) * 100)
-
   const daily    = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) >= 7))
-  const intraday = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) < 7 && Number(p.horizon_days) > 0))
-  const overall  = computeGroup(closedPreds)
-  const { status, dotColor, title, body } = getVerdict(total, hits, overall.mae)
-
-  const beating = accPct !== null && accPct > basePct
-  const hasIntraday = intraday.n > 0
+  const intraday = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) > 0 && Number(p.horizon_days) < 7))
 
   return (
     <section style={{ marginBottom: 64 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 24 }}>
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>01</span>
         <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
           ¿El sistema funciona?
         </h2>
       </div>
 
-      {/* Verdict card */}
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, boxShadow: 'var(--shadow)', overflow: 'hidden', marginBottom: 24 }}>
-
-        {/* Verdict header */}
-        <div style={{ padding: 32, borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '5px 11px', borderRadius: 999, background: 'var(--bg-muted)', marginBottom: 18 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: dotColor, display: 'inline-block' }} />
-            <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-              {status}
-            </span>
-          </div>
-          <h3 style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.015em', lineHeight: 1.25, margin: '0 0 12px', maxWidth: 660 }}>{title}</h3>
-          <p style={{ fontSize: 15, lineHeight: 1.65, color: 'var(--text-muted)', margin: 0, maxWidth: 640 }}>{body}</p>
-          <div style={{ marginTop: 26, maxWidth: 640 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)', marginBottom: 8 }}>
-              <span>{total} de {TARGET} ciclos necesarios</span>
-              <span>{((total / TARGET) * 100).toFixed(1)}%</span>
-            </div>
-            <div style={{ height: 8, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${progress.toFixed(2)}%`, minWidth: 4, background: 'var(--text-muted)', borderRadius: 999 }} />
-            </div>
-          </div>
-        </div>
-
-        {/* Ensamble vs baseline */}
-        <div style={{ padding: 32, borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Dirección: ensamble vs baseline</div>
-          <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)', margin: '0 0 22px', maxWidth: 600 }}>
-            El baseline es apostar siempre a que sube (~54% históricamente). El ensamble de {modelWeights.length || 16} modelos tiene que superar eso para valer la pena.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 640 }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7 }}>
-                <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>Ensamble ({modelWeights.length || 16} modelos)</span>
-                <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: beating ? 'var(--up)' : 'var(--down)' }}>{accPct !== null ? `${accPct}%` : '—'}</span>
-              </div>
-              <div style={{ height: 10, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden' }}>
-                {accPct !== null && <div style={{ height: '100%', width: `${accPct}%`, background: beating ? 'var(--up)' : 'var(--down)', borderRadius: 999 }} />}
-              </div>
-            </div>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7 }}>
-                <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>Baseline (siempre sube)</span>
-                <span style={{ fontFamily: MONO, fontSize: 14, fontWeight: 600, color: 'var(--text-muted)' }}>{basePct}%</span>
-              </div>
-              <div style={{ height: 10, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${basePct}%`, background: 'var(--text-hint)', borderRadius: 999 }} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Daily vs intraday breakdown */}
-        <div style={{ padding: 32, borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Dirección y magnitud — por tipo de predicción</div>
-          <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)', margin: '0 0 24px', maxWidth: 600 }}>
-            Acertar la dirección (sube/baja) es solo la mitad. La magnitud responde "¿cuánto?". Aquí mostramos ambas métricas separadas por horizonte.
-          </p>
-          <div style={{ display: 'flex', gap: 40, flexWrap: 'wrap' }}>
-            <GroupBlock title={`Diario (H ≥ 7d) · ${daily.n} pred`} g={daily} />
-            {hasIntraday && (
-              <>
-                <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
-                <GroupBlock title={`Intradiario · ${intraday.n} pred`} g={intraday} />
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Metric tiles */}
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${hasIntraday ? 6 : 5}, 1fr)` }}>
-          {[
-            { value: accPct !== null ? `${accPct}%` : '—', label: 'Dirección acertada', color: accPct !== null ? dirColor(accPct) : undefined },
-            { value: `${basePct}%`, label: 'Baseline compra-y-hold' },
-            { value: overall.mae !== null ? `±${overall.mae.toFixed(1)}%` : '—', label: 'Error medio magnitud (MAE)', color: overall.mae !== null ? maeColor(overall.mae) : undefined },
-            { value: String(total), label: 'Predicciones cerradas' },
-            { value: String(hits), label: 'Aciertos de dirección' },
-            ...(hasIntraday ? [{ value: intraday.mae !== null ? `±${intraday.mae.toFixed(1)}%` : '—', label: 'MAE intradiario', color: intraday.mae !== null ? maeColor(intraday.mae) : undefined }] : []),
-          ].map((tile, i, arr) => (
-            <div key={i} style={{ padding: '22px 24px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : undefined }}>
-              <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 500, color: tile.color ?? 'var(--text)', letterSpacing: '-0.01em' }}>{tile.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 5 }}>{tile.label}</div>
-            </div>
-          ))}
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <TypeCard
+          typeLabel="Predicciones diarias"
+          horizonNote="Horizonte de 7 a 90 días · modelo LGBM + Ridge · 16 modelos diarios"
+          g={daily}
+          dirTarget={65}
+          maeTarget={2.0}
+          totalCycles={daily.n}
+          isDaily={true}
+        />
+        <TypeCard
+          typeLabel="Predicciones intradiarias"
+          horizonNote="Horizonte inferior a 1 día · 13 modelos intradiarios"
+          g={intraday}
+          dirTarget={60}
+          maeTarget={1.0}
+          totalCycles={intraday.n}
+          isDaily={false}
+        />
       </div>
-
     </section>
   )
 }
