@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import type { DailyModelParam } from '@/app/page'
 
 export type ModelLRParam = {
   model_name: string
@@ -505,12 +506,144 @@ function ModelCard({
   )
 }
 
+const MONO2 = "var(--font-mono, 'IBM Plex Mono', monospace)"
+
+function maeColor2(v: number, isMae = true) {
+  if (!isMae) return v >= 0 ? '#22c55e' : '#ef4444'
+  if (v <= 1.5) return '#22c55e'
+  if (v <= 3.0) return '#d97706'
+  return '#ef4444'
+}
+
+function D2OverviewCard({ params }: { params: DailyModelParam[] }) {
+  const sorted = [...params].sort((a, b) => a.horizon_bucket - b.horizon_bucket)
+  if (sorted.length === 0) return (
+    <div style={{
+      background: 'var(--card)', border: '2px solid var(--border)', borderRadius: 12,
+      padding: '20px 24px', marginBottom: 24,
+    }}>
+      <div style={{ fontFamily: MONO2, fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 6 }}>
+        D2 · Modelo principal diario
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--text-hint)', margin: 0 }}>
+        Sin datos de entrenamiento todavía. Ejecutá "Modelo Diario D2" en la sección Entrenamiento.
+      </p>
+    </div>
+  )
+
+  const bestMae = Math.min(...sorted.filter(p => p.lgbm_val_mae != null).map(p => p.lgbm_val_mae!))
+
+  return (
+    <div style={{
+      background: 'var(--card)', border: '2px solid #3b82f633', borderRadius: 12,
+      overflow: 'hidden', marginBottom: 24,
+    }}>
+      {/* Header */}
+      <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', background: '#3b82f608' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div>
+            <div style={{ fontFamily: MONO2, fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#3b82f6', marginBottom: 3 }}>
+              D2 · Modelo principal diario
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>LGBM + Ridge · Predicción de magnitud</div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {[
+              { label: '40 features', color: '#3b82f6' },
+              { label: 'Por cluster', color: '#8b5cf6' },
+              { label: 'Winsorizado p99', color: '#06b6d4' },
+            ].map(t => (
+              <span key={t.label} style={{
+                fontSize: 10, fontFamily: MONO2, padding: '3px 9px', borderRadius: 20,
+                background: t.color + '18', color: t.color, border: `1px solid ${t.color}33`,
+                fontWeight: 600, letterSpacing: '0.05em',
+              }}>{t.label}</span>
+            ))}
+          </div>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6, maxWidth: 720 }}>
+          El modelo D2 predice <strong>cuánto</strong> se va a mover el activo (magnitud con signo). Combina 40 variables técnicas y de mercado:
+          medias móviles, momentum, volatilidad, VIX e interacciones. Se entrena por horizonte (7–90d) con clusters de activos similares.
+          El resultado alimenta el consenso: los 16 modelos de dirección votan, y D2 estima la magnitud del movimiento esperado.
+        </p>
+      </div>
+
+      {/* Per-horizon stats table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              {['Horizonte', 'MAE LGBM (val)', 'MAE Ridge (val)', 'Mejora vs Ridge', 'R² firmado', 'Muestras', 'Mag. media real'].map(h => (
+                <th key={h} style={{ padding: '8px 14px', textAlign: 'center', color: 'var(--text-hint)', fontWeight: 500, fontSize: 11, whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(p => {
+              const lgbm   = p.lgbm_val_mae
+              const ridge  = p.val_mae_ridge
+              const delta  = (lgbm != null && ridge != null) ? ((ridge - lgbm) / ridge * 100) : null
+              const isLgbmBest = lgbm != null && ridge != null && lgbm < ridge
+              const isBestOverall = lgbm != null && lgbm === bestMae
+              return (
+                <tr key={p.horizon_bucket} style={{ borderBottom: '1px solid var(--border)', background: isBestOverall ? '#22c55e08' : undefined }}>
+                  <td style={{ padding: '10px 14px', textAlign: 'center', fontFamily: MONO2, fontWeight: 700, fontSize: 14 }}>
+                    {p.horizon_bucket}d
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    {lgbm != null ? (
+                      <span style={{ fontFamily: MONO2, fontWeight: 700, color: maeColor2(lgbm), fontSize: 14 }}>
+                        ±{lgbm.toFixed(2)}%
+                      </span>
+                    ) : <span style={{ color: 'var(--text-hint)' }}>—</span>}
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    {ridge != null ? (
+                      <span style={{ fontFamily: MONO2, color: maeColor2(ridge), fontSize: 12 }}>
+                        ±{ridge.toFixed(2)}%
+                      </span>
+                    ) : <span style={{ color: 'var(--text-hint)' }}>—</span>}
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    {delta != null ? (
+                      <span style={{ fontFamily: MONO2, fontWeight: 600, color: delta > 0 ? '#22c55e' : '#ef4444', fontSize: 12 }}>
+                        {delta > 0 ? '+' : ''}{delta.toFixed(1)}%
+                      </span>
+                    ) : <span style={{ color: 'var(--text-hint)' }}>—</span>}
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                    {p.signed_r2 != null ? (
+                      <span style={{ fontFamily: MONO2, color: p.signed_r2 >= 0 ? '#22c55e' : '#ef4444', fontSize: 12 }}>
+                        {p.signed_r2.toFixed(3)}
+                      </span>
+                    ) : <span style={{ color: 'var(--text-hint)' }}>—</span>}
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center', fontFamily: MONO2, fontSize: 12, color: 'var(--text-muted)' }}>
+                    {p.train_samples != null ? p.train_samples.toLocaleString() : '—'}
+                  </td>
+                  <td style={{ padding: '10px 14px', textAlign: 'center', fontFamily: MONO2, fontSize: 12, color: 'var(--text-muted)' }}>
+                    {p.avg_actual_mag != null ? `±${p.avg_actual_mag.toFixed(2)}%` : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: '10px 16px', fontSize: 10, color: 'var(--text-hint)', borderTop: '1px solid var(--border)' }}>
+        MAE = error absoluto medio en validación out-of-sample · Mejora vs Ridge = cuánto baja el error al usar LGBM en lugar de Ridge · R² firmado = calidad de predicción de magnitud con signo (positivo = mejor que mean)
+      </div>
+    </div>
+  )
+}
+
 type Props = {
   modelLRParams: ModelLRParam[]
   backtestModelStats: BacktestModelStat[]
+  dailyModelParams?: DailyModelParam[]
 }
 
-export function ModelosSection({ modelLRParams, backtestModelStats }: Props) {
+export function ModelosSection({ modelLRParams, backtestModelStats, dailyModelParams = [] }: Props) {
   const [subTab, setSubTab] = useState<'diarios' | 'intradiarios'>('diarios')
 
   // Build maps
@@ -549,14 +682,14 @@ export function ModelosSection({ modelLRParams, backtestModelStats }: Props) {
       <div>
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>Modelos del Sistema</h2>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-          Arquitectura, variables, parámetros aprendidos y rendimiento histórico de cada modelo
+          Arquitectura D2: modelo LGBM de magnitud + 16 modelos de dirección. Arquitectura, variables y rendimiento de cada componente.
         </p>
       </div>
 
       {/* Sub-tab selector */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={() => setSubTab('diarios')} style={subTabStyle(subTab === 'diarios')}>
-          Diarios ({DAILY_MODELS.length} modelos · {trainedCount} entrenados con LR)
+          Diarios · D2 LGBM + {DAILY_MODELS.length} modelos de dirección
         </button>
         <button onClick={() => setSubTab('intradiarios')} style={subTabStyle(subTab === 'intradiarios')}>
           Intradiarios ({INTRADAY_SHARED.length + INTRADAY_ONLY.length} modelos)
@@ -572,6 +705,16 @@ export function ModelosSection({ modelLRParams, backtestModelStats }: Props) {
           </div>
         ))}
       </div>
+
+      {/* D2 overview — only on diarios tab */}
+      {subTab === 'diarios' && (
+        <>
+          <D2OverviewCard params={dailyModelParams} />
+          <div style={{ fontFamily: MONO2, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginTop: -16 }}>
+            16 modelos de dirección · cada uno vota sube/baja con su propia lógica
+          </div>
+        </>
+      )}
 
       {/* Intraday note */}
       {subTab === 'intradiarios' && (

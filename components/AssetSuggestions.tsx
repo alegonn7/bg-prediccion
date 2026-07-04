@@ -237,7 +237,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
         subtitle="Los activos con mayor volumen diario y cobertura global. Alta liquidez, spreads ajustados, fuerte cobertura de analistas."
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
-          {data.populares.map(p => (
+          {data.populares.filter(p => !tracked.has(p.ticker)).map(p => (
             <SuggestionCard
               key={p.ticker}
               ticker={p.ticker}
@@ -246,7 +246,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
               body={p.desc}
               onAdd={() => handleAdd(p.ticker, p.name)}
               adding={adding === p.ticker}
-              added={tracked.has(p.ticker)}
+              added={false}
             />
           ))}
         </div>
@@ -259,7 +259,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
         subtitle="Compañías con catalizadores reales pero baja cobertura mediática masiva. Mayor riesgo, mayor potencial de movimiento."
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
-          {data.radar.map(r => (
+          {data.radar.filter(r => !tracked.has(r.ticker)).map(r => (
             <SuggestionCard
               key={r.ticker}
               ticker={r.ticker}
@@ -269,7 +269,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
               body={r.razon}
               onAdd={() => handleAdd(r.ticker, r.name)}
               adding={adding === r.ticker}
-              added={tracked.has(r.ticker)}
+              added={false}
             />
           ))}
         </div>
@@ -287,7 +287,7 @@ export function AssetSuggestions({ trackedTickers, onAdded }: {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {data.macro.map(m => (
+            {data.macro.filter(m => !tracked.has(m.ticker)).map(m => (
               <div key={m.ticker} style={{
                 background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
                 padding: '18px 20px',

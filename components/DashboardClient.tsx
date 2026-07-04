@@ -127,6 +127,7 @@ export function DashboardClient({
           <ModelosSection
             modelLRParams={modelLRParams}
             backtestModelStats={backtestModelStats}
+            dailyModelParams={dailyModelParams}
           />
         )}
 
