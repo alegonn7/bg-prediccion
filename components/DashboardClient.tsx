@@ -104,7 +104,7 @@ export function DashboardClient({
           <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
         </nav>
 
-        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} />}
+        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} />}
         {active === 'open'          && <OpenPredictionsSection predictions={open} />}
         {active === 'intraday'      && <IntradaySectionClient />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} />}

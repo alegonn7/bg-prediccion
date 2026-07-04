@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const DAILY_BUCKETS = [7, 14, 30, 60, 90]
+const PAGE_SIZE = 10
 
 type ClosedPred = {
   id: string
@@ -19,7 +20,7 @@ type ClosedPred = {
   assets: { ticker: string; name: string } | null
 }
 
-type DateRange = '30d' | '90d' | 'all'
+type DateRange  = '30d' | '90d' | 'all'
 type SortTicker = 'n' | 'acc' | 'mae'
 
 function maeColor(v: number) {
@@ -32,7 +33,11 @@ function dirColor(v: number) {
   if (v >= 53) return '#ca8a04'
   return '#ef4444'
 }
-function mae(a: number, b: number) { return Math.abs(a - b) }
+function absDiff(a: number, b: number) { return Math.abs(a - b) }
+
+function bucketOf(horizonDays: number): number {
+  return DAILY_BUCKETS.find(b => horizonDays <= b) ?? 90
+}
 
 function Card({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
@@ -50,67 +55,86 @@ function SLabel({ children, style = {} }: { children: React.ReactNode; style?: R
 }
 
 export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[] }) {
-  const [dateRange, setDateRange] = useState<DateRange>('all')
-  const [sortTicker, setSortTicker] = useState<SortTicker>('n')
+  const [dateRange,     setDateRange]     = useState<DateRange>('all')
+  const [horizonFilter, setHorizonFilter] = useState<number | null>(null)
+  const [sortTicker,    setSortTicker]    = useState<SortTicker>('n')
+  const [page,          setPage]          = useState(0)
 
-  const filtered = useMemo(() => {
+  function resetPage() { setPage(0) }
+  function setHorizon(h: number | null) { setHorizonFilter(h); resetPage() }
+  function setSort(s: SortTicker) { setSortTicker(s); resetPage() }
+
+  // 1. filter by date
+  const byDate = useMemo(() => {
     if (dateRange === 'all') return closedPreds
-    const days = dateRange === '30d' ? 30 : 90
+    const days  = dateRange === '30d' ? 30 : 90
     const cutoff = Date.now() - days * 86400000
     return closedPreds.filter(p => p.target_date && new Date(p.target_date + 'T12:00:00').getTime() >= cutoff)
   }, [closedPreds, dateRange])
 
-  const evaled = filtered.filter(p => p.direction_correct !== null)
+  // 2. filter by horizon
+  const evaled = useMemo(() => {
+    const base = byDate.filter(p => p.direction_correct !== null)
+    if (horizonFilter === null) return base
+    return base.filter(p => bucketOf(Number(p.horizon_days)) === horizonFilter)
+  }, [byDate, horizonFilter])
+
   const total   = evaled.length
   const correct = evaled.filter(p => p.direction_correct).length
   const globalAcc = total > 0 ? correct / total * 100 : null
 
   const maePs = evaled.filter(p => p.actual_final_pct != null && p.final_pct_predicted != null)
   const globalMae = maePs.length > 0
-    ? maePs.reduce((s, p) => s + mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / maePs.length
+    ? maePs.reduce((s, p) => s + absDiff(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / maePs.length
     : null
 
   const avgAgr = evaled.length > 0
     ? evaled.reduce((s, p) => s + Number(p.agreement_pct ?? 0), 0) / evaled.length
     : null
 
-  // By horizon bucket
-  const byHorizon = DAILY_BUCKETS.map((h, i) => {
-    const lo = DAILY_BUCKETS[i - 1] ?? 0
-    const bucket = evaled.filter(p => { const d = Number(p.horizon_days); return d > lo && d <= h })
-    const n = bucket.length
-    const ok = bucket.filter(p => p.direction_correct).length
-    const mPs = bucket.filter(p => p.actual_final_pct != null && p.final_pct_predicted != null)
-    const m = mPs.length > 0 ? mPs.reduce((s, p) => s + mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / mPs.length : null
+  // By horizon (always over full byDate, not evaled — so the grid stays full)
+  const byHorizonStats = useMemo(() => DAILY_BUCKETS.map((h, i) => {
+    const lo     = DAILY_BUCKETS[i - 1] ?? 0
+    const bucket = byDate.filter(p => p.direction_correct !== null && Number(p.horizon_days) > lo && Number(p.horizon_days) <= h)
+    const n      = bucket.length
+    const ok     = bucket.filter(p => p.direction_correct).length
+    const mPs    = bucket.filter(p => p.actual_final_pct != null && p.final_pct_predicted != null)
+    const m      = mPs.length > 0 ? mPs.reduce((s, p) => s + absDiff(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / mPs.length : null
     return { h, n, acc: n >= 3 ? ok / n * 100 : null, mae: m }
-  })
+  }), [byDate])
 
   // By ticker
-  const byTicker: Record<string, { n: number; ok: number; maeArr: number[]; name: string }> = {}
-  for (const p of evaled) {
-    const t = p.assets?.ticker ?? '?'
-    if (!byTicker[t]) byTicker[t] = { n: 0, ok: 0, maeArr: [], name: p.assets?.name ?? '' }
-    byTicker[t].n++
-    if (p.direction_correct) byTicker[t].ok++
-    if (p.actual_final_pct != null && p.final_pct_predicted != null)
-      byTicker[t].maeArr.push(mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)))
-  }
-  const tickerList = Object.entries(byTicker).map(([ticker, v]) => ({
-    ticker,
-    name: v.name,
-    n: v.n,
-    acc: v.n >= 3 ? v.ok / v.n * 100 : null,
-    mae: v.maeArr.length > 0 ? v.maeArr.reduce((a, b) => a + b, 0) / v.maeArr.length : null,
-  }))
-  const sortedTickers = [...tickerList].sort((a, b) => {
+  const tickerList = useMemo(() => {
+    const map: Record<string, { n: number; ok: number; maeArr: number[]; name: string }> = {}
+    for (const p of evaled) {
+      const t = p.assets?.ticker ?? '?'
+      if (!map[t]) map[t] = { n: 0, ok: 0, maeArr: [], name: p.assets?.name ?? '' }
+      map[t].n++
+      if (p.direction_correct) map[t].ok++
+      if (p.actual_final_pct != null && p.final_pct_predicted != null)
+        map[t].maeArr.push(absDiff(Number(p.actual_final_pct), Number(p.final_pct_predicted)))
+    }
+    return Object.entries(map).map(([ticker, v]) => ({
+      ticker,
+      name: v.name,
+      n: v.n,
+      acc: v.n >= 3 ? v.ok / v.n * 100 : null,
+      mae: v.maeArr.length > 0 ? v.maeArr.reduce((a, b) => a + b, 0) / v.maeArr.length : null,
+    }))
+  }, [evaled])
+
+  const sortedTickers = useMemo(() => [...tickerList].sort((a, b) => {
     if (sortTicker === 'n')   return b.n - a.n
     if (sortTicker === 'acc') return (b.acc ?? -1) - (a.acc ?? -1)
     return (a.mae ?? 999) - (b.mae ?? 999)
-  })
+  }), [tickerList, sortTicker])
 
-  // Confidence calibration
+  const totalPages   = Math.ceil(sortedTickers.length / PAGE_SIZE)
+  const pageTickers  = sortedTickers.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  // Confidence calibration (on evaled)
   const confBuckets = [
-    { label: '<50%', lo: 0,    hi: 0.50 },
+    { label: '<50%',   lo: 0,    hi: 0.50 },
     { label: '50-60%', lo: 0.50, hi: 0.60 },
     { label: '60-70%', lo: 0.60, hi: 0.70 },
     { label: '70-80%', lo: 0.70, hi: 0.80 },
@@ -118,14 +142,10 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
   ].map(b => {
     const ps = evaled.filter(p => Number(p.confidence) >= b.lo && Number(p.confidence) < b.hi)
     const ok = ps.filter(p => p.direction_correct).length
-    return {
-      label: b.label, n: ps.length,
-      acc: ps.length >= 3 ? ok / ps.length * 100 : null,
-      avgConf: ps.length > 0 ? ps.reduce((s, p) => s + Number(p.confidence), 0) / ps.length * 100 : null,
-    }
+    return { label: b.label, n: ps.length, acc: ps.length >= 3 ? ok / ps.length * 100 : null }
   })
 
-  // Agreement vs accuracy
+  // Agreement calibration (on evaled)
   const agrBuckets = [
     { label: '<50%',   lo: 0,  hi: 50  },
     { label: '50-65%', lo: 50, hi: 65  },
@@ -137,20 +157,22 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
     return { label: b.label, n: ps.length, acc: ps.length >= 3 ? ok / ps.length * 100 : null }
   })
 
-  // Weekly trend (group by ISO week of target_date)
-  const weekMap: Record<string, { n: number; ok: number }> = {}
-  for (const p of evaled.filter(p => p.target_date)) {
-    const d = new Date(p.target_date! + 'T12:00:00')
-    const ms = d.getTime() - d.getDay() * 86400000
-    const key = new Date(ms).toISOString().slice(0, 10)
-    if (!weekMap[key]) weekMap[key] = { n: 0, ok: 0 }
-    weekMap[key].n++
-    if (p.direction_correct) weekMap[key].ok++
-  }
-  const weeks = Object.entries(weekMap)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-10)
-    .map(([date, v]) => ({ date, n: v.n, acc: v.n >= 3 ? v.ok / v.n * 100 : null }))
+  // Weekly trend (on evaled)
+  const weeks = useMemo(() => {
+    const weekMap: Record<string, { n: number; ok: number }> = {}
+    for (const p of evaled.filter(p => p.target_date)) {
+      const d  = new Date(p.target_date! + 'T12:00:00')
+      const ms = d.getTime() - d.getDay() * 86400000
+      const key = new Date(ms).toISOString().slice(0, 10)
+      if (!weekMap[key]) weekMap[key] = { n: 0, ok: 0 }
+      weekMap[key].n++
+      if (p.direction_correct) weekMap[key].ok++
+    }
+    return Object.entries(weekMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-10)
+      .map(([date, v]) => ({ date, n: v.n, acc: v.n >= 3 ? v.ok / v.n * 100 : null }))
+  }, [evaled])
 
   const DATE_OPTS: { id: DateRange; label: string }[] = [
     { id: '30d', label: 'Últ. 30d' },
@@ -158,49 +180,61 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
     { id: 'all', label: 'Todo' },
   ]
 
+  const pillBtn = (active: boolean, onClick: () => void, label: string) => (
+    <button onClick={onClick} style={{
+      padding: '4px 11px', fontSize: 11, fontFamily: MONO,
+      fontWeight: active ? 700 : 400,
+      background: active ? 'var(--text)' : 'var(--card)',
+      color: active ? 'var(--bg)' : 'var(--text-muted)',
+      border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
+    }}>{label}</button>
+  )
+
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 64 }}>
 
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 3 }}>
-            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>06</span>
-            <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
-              Análisis · predicciones cerradas
-            </h2>
+      {/* ── Header ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 3 }}>
+              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>06</span>
+              <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
+                Análisis · predicciones cerradas
+              </h2>
+            </div>
+            {total > 0 && (
+              <p style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)', margin: 0 }}>
+                {total} evaluadas{horizonFilter !== null && ` · H=${horizonFilter}d`} ·{' '}
+                <span style={{ color: globalAcc !== null ? dirColor(globalAcc) : 'inherit', fontWeight: 600 }}>
+                  {globalAcc?.toFixed(0)}% dirección
+                </span>
+                {globalMae !== null && (
+                  <> · MAE <span style={{ color: maeColor(globalMae), fontWeight: 600 }}>±{globalMae.toFixed(2)}%</span></>
+                )}
+              </p>
+            )}
           </div>
-          {total > 0 && (
-            <p style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)', margin: 0 }}>
-              {total} evaluadas ·{' '}
-              <span style={{ color: globalAcc !== null ? dirColor(globalAcc) : 'inherit', fontWeight: 600 }}>
-                {globalAcc?.toFixed(0)}% dirección
-              </span>
-              {globalMae !== null && (
-                <> · MAE <span style={{ color: maeColor(globalMae), fontWeight: 600 }}>±{globalMae.toFixed(2)}%</span></>
-              )}
-            </p>
-          )}
+          {/* Date range */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {DATE_OPTS.map(o => pillBtn(dateRange === o.id, () => { setDateRange(o.id); resetPage() }, o.label))}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {DATE_OPTS.map(o => (
-            <button key={o.id} onClick={() => setDateRange(o.id)} style={{
-              padding: '4px 11px', fontSize: 11, fontFamily: MONO,
-              fontWeight: dateRange === o.id ? 700 : 400,
-              background: dateRange === o.id ? 'var(--text)' : 'var(--card)',
-              color: dateRange === o.id ? 'var(--bg)' : 'var(--text-muted)',
-              border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
-            }}>
-              {o.label}
-            </button>
-          ))}
+
+        {/* Horizon filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', letterSpacing: '0.08em' }}>HORIZONTE:</span>
+          {pillBtn(horizonFilter === null, () => setHorizon(null), 'Todos')}
+          {DAILY_BUCKETS.map(h => pillBtn(horizonFilter === h, () => setHorizon(h), `${h}d`))}
         </div>
       </div>
 
       {total === 0 ? (
         <Card>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
-            Todavía no hay predicciones cerradas evaluadas. Aparecerán a medida que venzan las predicciones activas.
+            {horizonFilter !== null
+              ? `No hay predicciones cerradas para H=${horizonFilter}d con los filtros actuales.`
+              : 'Todavía no hay predicciones cerradas evaluadas. Aparecerán a medida que venzan las predicciones activas.'}
           </p>
         </Card>
       ) : (
@@ -230,30 +264,58 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
             </Card>
           </div>
 
-          {/* By horizon */}
+          {/* By horizon — clickable cards */}
           <Card>
-            <SLabel>Por horizonte</SLabel>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${DAILY_BUCKETS.length}, 1fr)`, gap: 8 }}>
-              {byHorizon.map(({ h, n, acc, mae: m }) => (
-                <div key={h} style={{
-                  background: 'var(--bg)', borderRadius: 8, padding: '12px 10px', textAlign: 'center',
-                  border: `1px solid ${acc !== null ? dirColor(acc) + '33' : 'var(--border)'}`,
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <SLabel style={{ marginBottom: 0 }}>Por horizonte</SLabel>
+              {horizonFilter !== null && (
+                <button onClick={() => setHorizon(null)} style={{
+                  fontSize: 10, fontFamily: MONO, color: 'var(--text-hint)', background: 'none',
+                  border: '1px solid var(--border)', borderRadius: 5, padding: '2px 8px', cursor: 'pointer',
                 }}>
-                  <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8 }}>{h}d</div>
-                  {acc !== null ? (
-                    <>
-                      <div style={{ fontFamily: MONO, fontSize: 20, fontWeight: 700, color: dirColor(acc) }}>{acc.toFixed(0)}%</div>
-                      <div style={{ fontSize: 10, color: 'var(--text-hint)', margin: '2px 0 6px' }}>dir</div>
-                      {m !== null && (
-                        <div style={{ fontFamily: MONO, fontSize: 12, color: maeColor(m), fontWeight: 600 }}>±{m.toFixed(1)}%</div>
-                      )}
-                      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>n={n}</div>
-                    </>
-                  ) : (
-                    <div style={{ color: 'var(--text-hint)', fontSize: 11 }}>—<br /><span style={{ fontSize: 10 }}>n={n}</span></div>
-                  )}
-                </div>
-              ))}
+                  × ver todos
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${DAILY_BUCKETS.length}, 1fr)`, gap: 8 }}>
+              {byHorizonStats.map(({ h, n, acc, mae: m }) => {
+                const isSelected = horizonFilter === h
+                const hasData = n > 0
+                return (
+                  <div
+                    key={h}
+                    onClick={() => hasData && setHorizon(isSelected ? null : h)}
+                    style={{
+                      background: isSelected ? 'var(--bg-muted, #f3f4f6)' : 'var(--bg)',
+                      borderRadius: 8, padding: '12px 10px', textAlign: 'center',
+                      border: isSelected
+                        ? `2px solid ${acc !== null ? dirColor(acc) : 'var(--text-muted)'}`
+                        : `1px solid ${acc !== null ? dirColor(acc) + '33' : 'var(--border)'}`,
+                      cursor: hasData ? 'pointer' : 'default',
+                      transition: 'border 0.1s, background 0.1s',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: isSelected ? 'var(--text)' : 'var(--text-hint)', marginBottom: 8, fontWeight: isSelected ? 700 : 400 }}>
+                      {h}d
+                    </div>
+                    {acc !== null ? (
+                      <>
+                        <div style={{ fontFamily: MONO, fontSize: 20, fontWeight: 700, color: dirColor(acc) }}>{acc.toFixed(0)}%</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-hint)', margin: '2px 0 6px' }}>dir</div>
+                        {m !== null && (
+                          <div style={{ fontFamily: MONO, fontSize: 12, color: maeColor(m), fontWeight: 600 }}>±{m.toFixed(1)}%</div>
+                        )}
+                        <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>n={n}</div>
+                      </>
+                    ) : (
+                      <div style={{ color: 'var(--text-hint)', fontSize: 11 }}>—<br /><span style={{ fontSize: 10 }}>n={n}</span></div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-hint)' }}>
+              Clic en un horizonte para filtrar toda la sección
             </div>
           </Card>
 
@@ -278,7 +340,7 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                 ))}
               </div>
               <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-hint)' }}>
-                Una predicción bien calibrada tiene ~70% de acierto cuando la confianza es 70%
+                Bien calibrado: confianza 70% → acierto ~70%
               </div>
             </Card>
 
@@ -310,7 +372,7 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
           {weeks.length >= 2 && (
             <Card>
               <SLabel>Tendencia semanal — % dirección correcta</SLabel>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 56 }}>
+              <div style={{ display: 'flex', gap: 6, height: 56, alignItems: 'flex-end' }}>
                 {weeks.map(w => (
                   <div key={w.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                     <div style={{ width: '100%', height: 44, position: 'relative', background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
@@ -334,13 +396,18 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
             </Card>
           )}
 
-          {/* Per ticker */}
+          {/* Per ticker with pagination */}
           <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <SLabel style={{ marginBottom: 0 }}>Por activo</SLabel>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <SLabel style={{ marginBottom: 0 }}>Por activo</SLabel>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>
+                  {sortedTickers.length} activos
+                </span>
+              </div>
               <div style={{ display: 'flex', gap: 5 }}>
                 {([['n', 'Más pred.'], ['acc', '% Dir.'], ['mae', 'Menor MAE']] as [SortTicker, string][]).map(([k, l]) => (
-                  <button key={k} onClick={() => setSortTicker(k)} style={{
+                  <button key={k} onClick={() => setSort(k)} style={{
                     padding: '3px 9px', fontSize: 10, fontFamily: MONO, border: '1px solid var(--border)',
                     borderRadius: 5, cursor: 'pointer', fontWeight: sortTicker === k ? 700 : 400,
                     background: sortTicker === k ? 'var(--text)' : 'var(--bg)',
@@ -349,23 +416,24 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                 ))}
               </div>
             </div>
+
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     {[
-                      { label: 'Ticker',         align: 'left'   as const },
-                      { label: 'Predicciones',   align: 'center' as const },
-                      { label: '% Dirección',    align: 'center' as const },
-                      { label: 'MAE',            align: 'center' as const },
-                      { label: 'Últimas',        align: 'left'   as const },
+                      { label: 'Ticker',       align: 'left'   as const },
+                      { label: 'Predicciones', align: 'center' as const },
+                      { label: '% Dirección',  align: 'center' as const },
+                      { label: 'MAE',          align: 'center' as const },
+                      { label: 'Últimas',      align: 'left'   as const },
                     ].map(h => (
                       <th key={h.label} style={{ padding: '6px 10px', textAlign: h.align, color: 'var(--text-hint)', fontWeight: 500, fontSize: 11 }}>{h.label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedTickers.map(t => {
+                  {pageTickers.map(t => {
                     const recent = evaled.filter(p => p.assets?.ticker === t.ticker).slice(0, 12)
                     return (
                       <tr key={t.ticker} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -380,12 +448,16 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                         <td style={{ padding: '7px 10px' }}>
                           <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                             {recent.map((p, i) => (
-                              <div key={i} title={`${p.direction_correct ? 'acertó' : 'falló'} · confianza ${(Number(p.confidence)*100).toFixed(0)}%`} style={{
-                                width: 9, height: 9, borderRadius: '50%',
-                                background: p.direction_correct ? '#22c55e' : '#ef4444',
-                                opacity: 0.35 + Number(p.confidence) * 0.65,
-                                flexShrink: 0,
-                              }} />
+                              <div
+                                key={i}
+                                title={`${p.direction_correct ? 'acertó' : 'falló'} · confianza ${(Number(p.confidence) * 100).toFixed(0)}%`}
+                                style={{
+                                  width: 9, height: 9, borderRadius: '50%',
+                                  background: p.direction_correct ? '#22c55e' : '#ef4444',
+                                  opacity: 0.35 + Number(p.confidence) * 0.65,
+                                  flexShrink: 0,
+                                }}
+                              />
                             ))}
                           </div>
                         </td>
@@ -395,10 +467,49 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>
+                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sortedTickers.length)} de {sortedTickers.length} activos
+                </span>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    onClick={() => setPage(p => p - 1)}
+                    disabled={page === 0}
+                    style={{
+                      padding: '5px 12px', fontSize: 11, fontFamily: MONO,
+                      background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6,
+                      cursor: page === 0 ? 'default' : 'pointer',
+                      color: page === 0 ? 'var(--text-hint)' : 'var(--text-muted)',
+                      opacity: page === 0 ? 0.4 : 1,
+                    }}
+                  >
+                    ← Anterior
+                  </button>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', padding: '0 4px' }}>
+                    {page + 1} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={page >= totalPages - 1}
+                    style={{
+                      padding: '5px 12px', fontSize: 11, fontFamily: MONO,
+                      background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6,
+                      cursor: page >= totalPages - 1 ? 'default' : 'pointer',
+                      color: page >= totalPages - 1 ? 'var(--text-hint)' : 'var(--text-muted)',
+                      opacity: page >= totalPages - 1 ? 0.4 : 1,
+                    }}
+                  >
+                    Siguiente →
+                  </button>
+                </div>
+              </div>
+            )}
           </Card>
         </>
       )}
     </section>
   )
 }
-
