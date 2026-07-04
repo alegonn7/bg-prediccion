@@ -207,8 +207,8 @@ export function ScorecardSection({
 }: {
   modelWeights: ModelWeight[]; hits: number; total: number; closedPreds?: any[]
 }) {
-  const daily    = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) >= 7))
-  const intraday = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) > 0 && Number(p.horizon_days) < 7))
+  const daily    = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) >= 1))
+  const intraday = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) > 0 && Number(p.horizon_days) < 1))
 
   return (
     <section style={{ marginBottom: 64 }}>
@@ -222,7 +222,7 @@ export function ScorecardSection({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <TypeCard
           typeLabel="Predicciones diarias"
-          horizonNote="Horizonte de 7 a 90 días · modelo LGBM + Ridge · 16 modelos diarios"
+          horizonNote="Horizonte de 1 a 90 días · modelo LGBM + Ridge · 16 modelos diarios"
           g={daily}
           dirTarget={65}
           maeTarget={2.0}
@@ -231,7 +231,7 @@ export function ScorecardSection({
         />
         <TypeCard
           typeLabel="Predicciones intradiarias"
-          horizonNote="Horizonte inferior a 1 día · 13 modelos intradiarios"
+          horizonNote="Horizonte inferior a 1 día (horas) · 13 modelos intradiarios"
           g={intraday}
           dirTarget={60}
           maeTarget={1.0}
