@@ -336,8 +336,8 @@ export function EntrenamientoSection({
                     <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 6 }}>{h}d</div>
                     {p?.lgbm_val_mae != null ? (
                       <>
-                        <div style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 16, fontWeight: 700, color: maeColor(p.lgbm_val_mae * 100) }}>
-                          ±{(p.lgbm_val_mae * 100).toFixed(1)}%
+                        <div style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 16, fontWeight: 700, color: maeColor(p.lgbm_val_mae) }}>
+                          ±{p.lgbm_val_mae.toFixed(2)}%
                         </div>
                         <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 2 }}>lgbm mae</div>
                         {p.train_samples != null && (
