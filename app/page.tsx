@@ -37,6 +37,20 @@ export type ChangelogEntry = {
   summary: string | null
 }
 
+export type ClosedIntradayPred = {
+  id: string
+  direction: string
+  direction_correct: boolean | null
+  actual_pct: number | null
+  final_pct_predicted: number | null
+  agreement_pct: number | null
+  horizon_minutes: number
+  closed_at: string | null
+  created_at: string
+  asset_id: string
+  assets: { ticker: string; name: string } | null
+}
+
 export type DailyModelParam = {
   horizon_bucket: number
   lgbm_val_mae: number | null
@@ -56,6 +70,7 @@ async function getData() {
   const [
     { data: open },
     { data: closed },
+    { data: closedIntraday },
     { data: modelWeights },
     { data: allAssets },
     { data: dailyModelParamsRaw },
@@ -86,6 +101,13 @@ async function getData() {
         asset_id, assets(ticker, name)`)
       .eq('status', 'closed')
       .order('target_date', { ascending: false })
+      .limit(2000),
+
+    supabase
+      .from('consensus_predictions_intraday')
+      .select('id, direction, direction_correct, actual_pct, final_pct_predicted, agreement_pct, horizon_minutes, closed_at, created_at, asset_id, assets(ticker, name)')
+      .eq('status', 'closed')
+      .order('closed_at', { ascending: false })
       .limit(2000),
 
     supabase
@@ -202,6 +224,7 @@ async function getData() {
   return {
     open: openWithPrices,
     closed: closedAll,
+    closedIntraday: (closedIntraday ?? []) as unknown as ClosedIntradayPred[],
     modelWeights: modelWeights ?? [],
     hits:  closedAll.filter((c: any) => c.direction_correct).length,
     total: closedAll.length,
@@ -221,7 +244,7 @@ export const revalidate = 300
 
 export default async function Dashboard() {
   const {
-    open, closed, modelWeights, hits, total, assets,
+    open, closed, closedIntraday, modelWeights, hits, total, assets,
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog, xgbHistory,
@@ -230,6 +253,7 @@ export default async function Dashboard() {
     <DashboardClient
       open={open}
       closed={closed}
+      closedIntraday={closedIntraday}
       modelWeights={modelWeights}
       hits={hits}
       total={total}

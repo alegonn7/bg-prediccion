@@ -12,7 +12,7 @@ import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam } from '@/app/page'
+import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam, ClosedIntradayPred } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 
@@ -21,6 +21,7 @@ type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 
 type Props = {
   open: any[]
   closed: any[]
+  closedIntraday: ClosedIntradayPred[]
   modelWeights: any[]
   hits: number
   total: number
@@ -36,7 +37,7 @@ type Props = {
 }
 
 export function DashboardClient({
-  open, closed, modelWeights, hits, total, assets, openPredsSummary,
+  open, closed, closedIntraday, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
@@ -104,7 +105,7 @@ export function DashboardClient({
           <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
         </nav>
 
-        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} />}
+        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} />}
         {active === 'open'          && <OpenPredictionsSection predictions={open} />}
         {active === 'intraday'      && <IntradaySectionClient />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} />}

@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useState, useMemo } from 'react'
+import type { ClosedIntradayPred } from '@/app/page'
 
 const MONO   = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const CYCLES = 400
@@ -10,16 +11,31 @@ type ModelWeight = {
 
 type G = { n: number; ok: number; acc: number | null; mae: number | null }
 
-function computeGroup(preds: any[]): G {
-  const evaled  = preds.filter((p: any) => p.direction_correct !== null)
-  const n       = evaled.length
-  const ok      = evaled.filter((p: any) => p.direction_correct).length
-  const maePs   = evaled.filter((p: any) => p.actual_final_pct != null && p.final_pct_predicted != null)
-  const mae     = maePs.length > 0
+// Daily: actual_final_pct field
+function computeDailyGroup(preds: any[]): G {
+  const evaled = preds.filter((p: any) => p.direction_correct !== null)
+  const n      = evaled.length
+  const ok     = evaled.filter((p: any) => p.direction_correct).length
+  const maePs  = evaled.filter((p: any) => p.actual_final_pct != null && p.final_pct_predicted != null)
+  const mae    = maePs.length > 0
     ? maePs.reduce((s: number, p: any) => s + Math.abs(Number(p.actual_final_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
     : null
   return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae }
 }
+
+// Intraday: actual_pct field
+function computeIntradayGroup(preds: ClosedIntradayPred[]): G {
+  const evaled = preds.filter(p => p.direction_correct !== null)
+  const n      = evaled.length
+  const ok     = evaled.filter(p => p.direction_correct).length
+  const maePs  = evaled.filter(p => p.actual_pct != null && p.final_pct_predicted != null)
+  const mae    = maePs.length > 0
+    ? maePs.reduce((s, p) => s + Math.abs(Number(p.actual_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
+    : null
+  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae }
+}
+
+type DateRange = '30d' | '90d' | 'all'
 
 function dirColor(v: number, target: number) {
   if (v >= target) return '#22c55e'
@@ -202,21 +218,55 @@ function TypeCard({
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
+const DATE_OPTS: { id: DateRange; label: string }[] = [
+  { id: '30d', label: 'Últ. 30d' },
+  { id: '90d', label: 'Últ. 90d' },
+  { id: 'all', label: 'Todo' },
+]
+
 export function ScorecardSection({
-  modelWeights, hits, total, closedPreds = [],
+  modelWeights, hits, total, closedPreds = [], closedIntradayPreds = [],
 }: {
-  modelWeights: ModelWeight[]; hits: number; total: number; closedPreds?: any[]
+  modelWeights: ModelWeight[]; hits: number; total: number
+  closedPreds?: any[]; closedIntradayPreds?: ClosedIntradayPred[]
 }) {
-  const daily    = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) >= 1))
-  const intraday = computeGroup(closedPreds.filter((p: any) => Number(p.horizon_days) > 0 && Number(p.horizon_days) < 1))
+  const [dateRange, setDateRange] = useState<DateRange>('all')
+
+  const filteredDaily = useMemo(() => {
+    if (dateRange === 'all') return closedPreds
+    const days   = dateRange === '30d' ? 30 : 90
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+    return closedPreds.filter((p: any) => p.target_date >= cutoff)
+  }, [closedPreds, dateRange])
+
+  const filteredIntraday = useMemo(() => {
+    if (dateRange === 'all') return closedIntradayPreds
+    const days   = dateRange === '30d' ? 30 : 90
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString()
+    return closedIntradayPreds.filter(p => (p.closed_at ?? p.created_at) >= cutoff)
+  }, [closedIntradayPreds, dateRange])
+
+  const daily    = computeDailyGroup(filteredDaily)
+  const intraday = computeIntradayGroup(filteredIntraday)
 
   return (
     <section style={{ marginBottom: 64 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>01</span>
-        <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
+        <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0, flex: 1 }}>
           ¿El sistema funciona?
         </h2>
+        {/* Date range filter */}
+        <div style={{ display: 'flex', gap: 5 }}>
+          {DATE_OPTS.map(o => (
+            <button key={o.id} onClick={() => setDateRange(o.id)} style={{
+              padding: '5px 12px', fontSize: 11, fontFamily: MONO, border: '1px solid var(--border)', borderRadius: 6,
+              cursor: 'pointer', fontWeight: dateRange === o.id ? 700 : 400,
+              background: dateRange === o.id ? 'var(--text)' : 'var(--bg)',
+              color: dateRange === o.id ? 'var(--bg)' : 'var(--text-muted)',
+            }}>{o.label}</button>
+          ))}
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -231,10 +281,10 @@ export function ScorecardSection({
         />
         <TypeCard
           typeLabel="Predicciones intradiarias"
-          horizonNote="Horizonte inferior a 1 día (horas) · 13 modelos intradiarios"
+          horizonNote="Dentro del mismo día de mercado · 13 modelos intradiarios"
           g={intraday}
           dirTarget={60}
-          maeTarget={1.0}
+          maeTarget={0.5}
           totalCycles={intraday.n}
           isDaily={false}
         />
