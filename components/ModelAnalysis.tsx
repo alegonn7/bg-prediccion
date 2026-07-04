@@ -1,406 +1,193 @@
 'use client'
 import { useState, useMemo } from 'react'
-import type { ModelDetailStat, RawModelPred } from '@/app/page'
-import { ModelPerformance } from './ModelPerformance'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
+const DAILY_BUCKETS = [7, 14, 30, 60, 90]
 
-const MODEL_LABELS: Record<string, string> = {
-  tendencia:       'Tendencia',
-  momentum:        'Momentum',
-  volatilidad:     'Volatilidad',
-  volumen:         'Volumen',
-  estructura:      'Estructura',
-  elliott:         'Elliott',
-  velas:           'Velas',
-  macro:           'Macro',
-  fundamental:     'Fundamental',
-  sentimiento:     'Sentimiento',
-  regresion:       'Regresión lineal',
-  reversion:       'Reversión media',
-  divergencias:    'Divergencias',
-  estacionalidad:  'Estacionalidad',
-  beta_mercado:    'Beta-mercado',
-  fuerza_relativa: 'Fuerza relativa',
+type ClosedPred = {
+  id: string
+  direction: string
+  direction_correct: boolean | null
+  actual_final_pct: number | null
+  final_pct_predicted: number | null
+  confidence: number
+  agreement_pct: number | null
+  horizon_days: number
+  target_date: string | null
+  created_at: string
+  asset_id: string
+  assets: { ticker: string; name: string } | null
 }
 
-const ALL_MODELS = [
-  'tendencia','momentum','volatilidad','volumen','estructura','elliott',
-  'velas','macro','fundamental','sentimiento',
-  'regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa',
-]
+type DateRange = '30d' | '90d' | 'all'
+type SortTicker = 'n' | 'acc' | 'mae'
 
-type DateRange = '7d' | '30d' | '90d' | 'all'
-const DATE_OPTS: { id: DateRange; label: string }[] = [
-  { id: '7d',  label: 'Últ. 7d' },
-  { id: '30d', label: 'Últ. 30d' },
-  { id: '90d', label: 'Últ. 90d' },
-  { id: 'all', label: 'Todo' },
-]
-
-type SortKey = 'mae' | 'dir' | 'n'
-
-function maeBg(v: number) {
-  if (v <= 1.5) return 'rgba(34,197,94,0.15)'
-  if (v <= 4)   return 'rgba(234,179,8,0.15)'
-  return 'rgba(239,68,68,0.12)'
-}
 function maeColor(v: number) {
-  if (v <= 1.5) return 'var(--up)'
-  if (v <= 4)   return '#d97706'
-  return 'var(--down)'
+  if (v <= 1.5) return '#22c55e'
+  if (v <= 3.5) return '#ca8a04'
+  return '#ef4444'
 }
 function dirColor(v: number) {
-  if (v >= 65) return 'var(--up)'
-  if (v >= 53) return '#d97706'
-  return 'var(--down)'
+  if (v >= 65) return '#22c55e'
+  if (v >= 53) return '#ca8a04'
+  return '#ef4444'
 }
+function mae(a: number, b: number) { return Math.abs(a - b) }
 
-function filterByDate(preds: RawModelPred[], range: DateRange): RawModelPred[] {
-  if (range === 'all') return preds
-  const now = new Date()
-  const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
-  return preds.filter(p => {
-    const d = p.target_date ? new Date(p.target_date + 'T12:00:00') : null
-    return d && now.getTime() - d.getTime() <= days * 86400000
-  })
-}
-
-function buildStats(preds: RawModelPred[]): ModelDetailStat[] {
-  const byModel: Record<string, RawModelPred[]> = {}
-  for (const mn of ALL_MODELS) byModel[mn] = []
-  for (const p of preds) {
-    if (byModel[p.model_name]) byModel[p.model_name].push(p)
-  }
-
-  const HORIZON_BUCKETS = [1, 2, 7, 14, 30, 60, 90]
-
-  return ALL_MODELS.map(mn => {
-    const ps = byModel[mn] ?? []
-    const total   = ps.length
-    const correct = ps.filter(p => p.direction_correct).length
-    const up      = ps.filter(p => p.direction === 'up')
-    const down    = ps.filter(p => p.direction === 'down')
-    const maes    = ps.filter(p => p.mae != null).map(p => Number(p.mae))
-    const confs   = ps.map(p => Number(p.confidence))
-
-    const byHorizon: Record<number, number[]> = {}
-    for (const h of HORIZON_BUCKETS) byHorizon[h] = []
-    for (const p of ps) {
-      if (p.mae == null) continue
-      const h = Number(p.horizon_days)
-      const bucket = HORIZON_BUCKETS.find(b => h <= b) ?? 90
-      byHorizon[bucket].push(Number(p.mae))
-    }
-
-    const byTicker: Record<string, { total: number; correct: number; maes: number[] }> = {}
-    for (const p of ps) {
-      const t = p.assets?.ticker ?? '?'
-      if (!byTicker[t]) byTicker[t] = { total: 0, correct: 0, maes: [] }
-      byTicker[t].total++
-      if (p.direction_correct) byTicker[t].correct++
-      if (p.mae != null) byTicker[t].maes.push(Number(p.mae))
-    }
-
-    return {
-      model_name:   mn,
-      total,
-      correct,
-      dir_accuracy: total >= 3 ? correct / total : null,
-      called_up:    up.length,
-      correct_up:   up.filter(p => p.direction_correct).length,
-      called_down:  down.length,
-      correct_down: down.filter(p => p.direction_correct).length,
-      mae_avg:      maes.length ? maes.reduce((a, b) => a + b, 0) / maes.length : null,
-      rmse_avg:     null,
-      mae_when_correct: null,
-      mae_when_wrong:   null,
-      avg_confidence:   confs.length ? confs.reduce((a, b) => a + b, 0) / confs.length : 0,
-      conf_low:  { total: 0, correct: 0 },
-      conf_mid:  { total: 0, correct: 0 },
-      conf_high: { total: 0, correct: 0 },
-      by_ticker: Object.entries(byTicker)
-        .map(([ticker, v]) => ({
-          ticker, total: v.total, correct: v.correct,
-          accuracy: v.total > 0 ? v.correct / v.total : 0,
-          mae_avg:  v.maes.length ? v.maes.reduce((a, b) => a + b, 0) / v.maes.length : null,
-        }))
-        .sort((a, b) => (a.mae_avg ?? 999) - (b.mae_avg ?? 999)),
-      mae_by_horizon: HORIZON_BUCKETS
-        .filter(h => byHorizon[h].length > 0)
-        .map(h => ({ horizon: h, mae: byHorizon[h].reduce((a, b) => a + b, 0) / byHorizon[h].length, n: byHorizon[h].length })),
-      recent: ps.slice(0, 15).map(p => ({
-        correct:    p.direction_correct as boolean,
-        confidence: Number(p.confidence),
-        ticker:     p.assets?.ticker ?? '?',
-      })),
-    }
-  })
-}
-
-function ModelRow({ stat, rank, expanded, onToggle }: {
-  stat: ModelDetailStat; rank: number; expanded: boolean; onToggle: () => void
-}) {
-  const maeVal = stat.mae_avg !== null ? stat.mae_avg * 100 : null
-  const dirVal = stat.dir_accuracy !== null ? stat.dir_accuracy * 100 : null
-
+function Card({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <>
-      <div
-        onClick={onToggle}
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '28px 1.6fr 110px 90px 60px 1fr',
-          gap: 12, padding: '12px 20px',
-          alignItems: 'center', cursor: 'pointer',
-          borderBottom: expanded ? 'none' : '1px solid var(--border)',
-          background: expanded ? 'var(--bg-muted)' : 'transparent',
-          transition: 'background 0.1s',
-        }}
-        onMouseEnter={e => { if (!expanded) (e.currentTarget as HTMLElement).style.background = 'var(--bg-muted)' }}
-        onMouseLeave={e => { if (!expanded) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-      >
-        {/* Rank */}
-        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>#{rank}</span>
-
-        {/* Model name */}
-        <span style={{ fontSize: 13, fontWeight: 600 }}>{MODEL_LABELS[stat.model_name] ?? stat.model_name}</span>
-
-        {/* MAE badge — primary metric */}
-        {maeVal !== null ? (
-          <div style={{
-            background: maeBg(maeVal),
-            borderRadius: 8, padding: '5px 10px',
-            display: 'inline-flex', alignItems: 'baseline', gap: 2,
-          }}>
-            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: maeColor(maeVal) }}>
-              ±{maeVal.toFixed(1)}
-            </span>
-            <span style={{ fontFamily: MONO, fontSize: 10, color: maeColor(maeVal), opacity: 0.8 }}>%</span>
-          </div>
-        ) : (
-          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>—</span>
-        )}
-
-        {/* Direction accuracy */}
-        {dirVal !== null ? (
-          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, color: dirColor(dirVal) }}>
-            {Math.round(dirVal)}%
-          </span>
-        ) : (
-          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>—</span>
-        )}
-
-        {/* n */}
-        <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>
-          {stat.total > 0 ? stat.total : '—'}
-        </span>
-
-        {/* Recent dots */}
-        <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-          {stat.recent.slice(0, 12).map((r, i) => (
-            <div key={i} title={`${r.ticker} · ${r.correct ? 'acertó' : 'falló'}`} style={{
-              width: 9, height: 9, borderRadius: '50%',
-              background: r.correct ? 'var(--up)' : 'var(--down)',
-              opacity: 0.3 + r.confidence * 0.7,
-            }} />
-          ))}
-          {stat.total === 0 && (
-            <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>sin datos</span>
-          )}
-        </div>
-      </div>
-
-      {/* Expanded: MAE por horizonte + por activo */}
-      {expanded && (
-        <div style={{
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--bg-muted)',
-          padding: '0 20px 20px',
-          position: 'relative',
-        }}>
-          <button
-            onClick={onToggle}
-            style={{
-              position: 'absolute', top: 10, right: 14,
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 16, color: 'var(--text-hint)', lineHeight: 1, padding: '2px 6px',
-            }}
-          >×</button>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, paddingTop: 16 }}>
-
-            {/* MAE por horizonte */}
-            <div>
-              <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
-                MAE por horizonte
-              </div>
-              {stat.mae_by_horizon.length === 0 ? (
-                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>sin datos</span>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {stat.mae_by_horizon.map(h => {
-                    const mpp = h.mae * 100
-                    return (
-                      <div key={h.horizon} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', minWidth: 42 }}>
-                          {h.horizon}d
-                        </span>
-                        <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
-                          <div style={{
-                            height: '100%', borderRadius: 999,
-                            width: `${Math.min(mpp / 8 * 100, 100)}%`,
-                            background: maeColor(mpp),
-                          }} />
-                        </div>
-                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: maeColor(mpp), minWidth: 52, textAlign: 'right' }}>
-                          ±{mpp.toFixed(1)}%
-                        </span>
-                        <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 32 }}>
-                          n={h.n}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {stat.recent.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 8 }}>
-                    Últimas {stat.recent.length} predicciones
-                  </div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {stat.recent.map((r, i) => (
-                      <div key={i} title={`${r.ticker} · ${r.correct ? 'acertó' : 'falló'}`} style={{
-                        width: 12, height: 12, borderRadius: '50%',
-                        background: r.correct ? 'var(--up)' : 'var(--down)',
-                        opacity: 0.3 + r.confidence * 0.7,
-                      }} />
-                    ))}
-                  </div>
-                  <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>
-                    verde=acertó dirección · rojo=falló · opacidad=confianza
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* MAE por activo */}
-            <div>
-              <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
-                MAE por activo (mejor → peor)
-              </div>
-              {stat.by_ticker.length === 0 ? (
-                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>sin datos</span>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  {stat.by_ticker.slice(0, 10).map(t => {
-                    const mpp = t.mae_avg !== null ? t.mae_avg * 100 : null
-                    return (
-                      <div key={t.ticker} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, minWidth: 48 }}>{t.ticker}</span>
-                        <div style={{ flex: 1, height: 5, background: 'var(--border)', borderRadius: 999, overflow: 'hidden' }}>
-                          {mpp !== null && (
-                            <div style={{
-                              height: '100%', borderRadius: 999,
-                              width: `${Math.min(mpp / 8 * 100, 100)}%`,
-                              background: maeColor(mpp),
-                            }} />
-                          )}
-                        </div>
-                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: mpp !== null ? maeColor(mpp) : 'var(--text-hint)', minWidth: 52, textAlign: 'right' }}>
-                          {mpp !== null ? `±${mpp.toFixed(1)}%` : '—'}
-                        </span>
-                        <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', minWidth: 38, textAlign: 'right' }}>
-                          {Math.round(t.accuracy * 100)}% dir
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: '18px 20px', ...style }}>
+      {children}
+    </div>
+  )
+}
+function SLabel({ children, style = {} }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 12, ...style }}>
+      {children}
+    </div>
   )
 }
 
-export function ModelAnalysisSection({ stats, rawPreds }: { stats: ModelDetailStat[]; rawPreds: RawModelPred[] }) {
-  const [expanded,  setExpanded]  = useState<string | null>(null)
-  const [sortKey,   setSortKey]   = useState<SortKey>('mae')
-  const [sortAsc,   setSortAsc]   = useState(true)
+export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[] }) {
   const [dateRange, setDateRange] = useState<DateRange>('all')
+  const [sortTicker, setSortTicker] = useState<SortTicker>('n')
 
-  const activeStats = useMemo(() => {
-    if (dateRange === 'all') return stats
-    const filtered = filterByDate(rawPreds, dateRange)
-    return buildStats(filtered)
-  }, [dateRange, stats, rawPreds])
+  const filtered = useMemo(() => {
+    if (dateRange === 'all') return closedPreds
+    const days = dateRange === '30d' ? 30 : 90
+    const cutoff = Date.now() - days * 86400000
+    return closedPreds.filter(p => p.target_date && new Date(p.target_date + 'T12:00:00').getTime() >= cutoff)
+  }, [closedPreds, dateRange])
 
-  const totalClosed  = activeStats.reduce((s, m) => s + m.total, 0)
-  const totalCorrect = activeStats.reduce((s, m) => s + m.correct, 0)
-  const globalMae    = (() => {
-    const ms = activeStats.filter(m => m.mae_avg !== null).map(m => m.mae_avg! * 100)
-    return ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : null
-  })()
+  const evaled = filtered.filter(p => p.direction_correct !== null)
+  const total   = evaled.length
+  const correct = evaled.filter(p => p.direction_correct).length
+  const globalAcc = total > 0 ? correct / total * 100 : null
 
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) setSortAsc(a => !a)
-    else { setSortKey(key); setSortAsc(key === 'mae') }
-  }
+  const maePs = evaled.filter(p => p.actual_final_pct != null && p.final_pct_predicted != null)
+  const globalMae = maePs.length > 0
+    ? maePs.reduce((s, p) => s + mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / maePs.length
+    : null
 
-  const sorted = [...activeStats].sort((a, b) => {
-    let va: number, vb: number
-    if (sortKey === 'mae') {
-      va = a.mae_avg ?? (sortAsc ? 999 : -1)
-      vb = b.mae_avg ?? (sortAsc ? 999 : -1)
-    } else if (sortKey === 'dir') {
-      va = a.dir_accuracy ?? (sortAsc ? -1 : 999)
-      vb = b.dir_accuracy ?? (sortAsc ? -1 : 999)
-    } else {
-      va = a.total; vb = b.total
-    }
-    return sortAsc ? va - vb : vb - va
+  const avgAgr = evaled.length > 0
+    ? evaled.reduce((s, p) => s + Number(p.agreement_pct ?? 0), 0) / evaled.length
+    : null
+
+  // By horizon bucket
+  const byHorizon = DAILY_BUCKETS.map((h, i) => {
+    const lo = DAILY_BUCKETS[i - 1] ?? 0
+    const bucket = evaled.filter(p => { const d = Number(p.horizon_days); return d > lo && d <= h })
+    const n = bucket.length
+    const ok = bucket.filter(p => p.direction_correct).length
+    const mPs = bucket.filter(p => p.actual_final_pct != null && p.final_pct_predicted != null)
+    const m = mPs.length > 0 ? mPs.reduce((s, p) => s + mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)), 0) / mPs.length : null
+    return { h, n, acc: n >= 3 ? ok / n * 100 : null, mae: m }
   })
 
-  function SortBtn({ label, k }: { label: string; k: SortKey }) {
-    const active = sortKey === k
-    return (
-      <button onClick={() => toggleSort(k)} style={{
-        background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-        fontFamily: MONO, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
-        color: active ? 'var(--text)' : 'var(--text-hint)',
-        fontWeight: active ? 700 : 400,
-      }}>
-        {label} {active ? (sortAsc ? '↑' : '↓') : ''}
-      </button>
-    )
+  // By ticker
+  const byTicker: Record<string, { n: number; ok: number; maeArr: number[]; name: string }> = {}
+  for (const p of evaled) {
+    const t = p.assets?.ticker ?? '?'
+    if (!byTicker[t]) byTicker[t] = { n: 0, ok: 0, maeArr: [], name: p.assets?.name ?? '' }
+    byTicker[t].n++
+    if (p.direction_correct) byTicker[t].ok++
+    if (p.actual_final_pct != null && p.final_pct_predicted != null)
+      byTicker[t].maeArr.push(mae(Number(p.actual_final_pct), Number(p.final_pct_predicted)))
   }
+  const tickerList = Object.entries(byTicker).map(([ticker, v]) => ({
+    ticker,
+    name: v.name,
+    n: v.n,
+    acc: v.n >= 3 ? v.ok / v.n * 100 : null,
+    mae: v.maeArr.length > 0 ? v.maeArr.reduce((a, b) => a + b, 0) / v.maeArr.length : null,
+  }))
+  const sortedTickers = [...tickerList].sort((a, b) => {
+    if (sortTicker === 'n')   return b.n - a.n
+    if (sortTicker === 'acc') return (b.acc ?? -1) - (a.acc ?? -1)
+    return (a.mae ?? 999) - (b.mae ?? 999)
+  })
+
+  // Confidence calibration
+  const confBuckets = [
+    { label: '<50%', lo: 0,    hi: 0.50 },
+    { label: '50-60%', lo: 0.50, hi: 0.60 },
+    { label: '60-70%', lo: 0.60, hi: 0.70 },
+    { label: '70-80%', lo: 0.70, hi: 0.80 },
+    { label: '>80%',   lo: 0.80, hi: 1.01 },
+  ].map(b => {
+    const ps = evaled.filter(p => Number(p.confidence) >= b.lo && Number(p.confidence) < b.hi)
+    const ok = ps.filter(p => p.direction_correct).length
+    return {
+      label: b.label, n: ps.length,
+      acc: ps.length >= 3 ? ok / ps.length * 100 : null,
+      avgConf: ps.length > 0 ? ps.reduce((s, p) => s + Number(p.confidence), 0) / ps.length * 100 : null,
+    }
+  })
+
+  // Agreement vs accuracy
+  const agrBuckets = [
+    { label: '<50%',   lo: 0,  hi: 50  },
+    { label: '50-65%', lo: 50, hi: 65  },
+    { label: '65-80%', lo: 65, hi: 80  },
+    { label: '>80%',   lo: 80, hi: 101 },
+  ].map(b => {
+    const ps = evaled.filter(p => Number(p.agreement_pct ?? 0) >= b.lo && Number(p.agreement_pct ?? 0) < b.hi)
+    const ok = ps.filter(p => p.direction_correct).length
+    return { label: b.label, n: ps.length, acc: ps.length >= 3 ? ok / ps.length * 100 : null }
+  })
+
+  // Weekly trend (group by ISO week of target_date)
+  const weekMap: Record<string, { n: number; ok: number }> = {}
+  for (const p of evaled.filter(p => p.target_date)) {
+    const d = new Date(p.target_date! + 'T12:00:00')
+    const ms = d.getTime() - d.getDay() * 86400000
+    const key = new Date(ms).toISOString().slice(0, 10)
+    if (!weekMap[key]) weekMap[key] = { n: 0, ok: 0 }
+    weekMap[key].n++
+    if (p.direction_correct) weekMap[key].ok++
+  }
+  const weeks = Object.entries(weekMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-10)
+    .map(([date, v]) => ({ date, n: v.n, acc: v.n >= 3 ? v.ok / v.n * 100 : null }))
+
+  const DATE_OPTS: { id: DateRange; label: string }[] = [
+    { id: '30d', label: 'Últ. 30d' },
+    { id: '90d', label: 'Últ. 90d' },
+    { id: 'all', label: 'Todo' },
+  ]
 
   return (
-    <section style={{ marginBottom: 64 }}>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 64 }}>
+
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flex: 1, minWidth: 0 }}>
-          <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>06</span>
-          <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
-            Análisis de modelos
-          </h2>
-          {totalClosed > 0 && (
-            <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>
-              {totalClosed} eval · {Math.round(totalCorrect / totalClosed * 100)}% dir
-              {globalMae !== null && ` · MAE ±${globalMae.toFixed(1)}%`}
-            </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 3 }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>06</span>
+            <h2 style={{ fontSize: 13, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>
+              Análisis · predicciones cerradas
+            </h2>
+          </div>
+          {total > 0 && (
+            <p style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)', margin: 0 }}>
+              {total} evaluadas ·{' '}
+              <span style={{ color: globalAcc !== null ? dirColor(globalAcc) : 'inherit', fontWeight: 600 }}>
+                {globalAcc?.toFixed(0)}% dirección
+              </span>
+              {globalMae !== null && (
+                <> · MAE <span style={{ color: maeColor(globalMae), fontWeight: 600 }}>±{globalMae.toFixed(2)}%</span></>
+              )}
+            </p>
           )}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           {DATE_OPTS.map(o => (
-            <button key={o.id} onClick={() => { setDateRange(o.id); setExpanded(null) }} style={{
+            <button key={o.id} onClick={() => setDateRange(o.id)} style={{
               padding: '4px 11px', fontSize: 11, fontFamily: MONO,
               fontWeight: dateRange === o.id ? 700 : 400,
-              background: dateRange === o.id ? 'var(--text)' : 'var(--bg-card)',
+              background: dateRange === o.id ? 'var(--text)' : 'var(--card)',
               color: dateRange === o.id ? 'var(--bg)' : 'var(--text-muted)',
               border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer',
             }}>
@@ -410,50 +197,208 @@ export function ModelAnalysisSection({ stats, rawPreds }: { stats: ModelDetailSt
         </div>
       </div>
 
-      {totalClosed === 0 ? (
-        <div style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 12,
-          padding: '20px 24px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6,
-        }}>
-          Los modelos se auditan cuando vencen las predicciones. La tabla aparecerá con datos reales a medida que cierren.
-        </div>
+      {total === 0 ? (
+        <Card>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.6 }}>
+            Todavía no hay predicciones cerradas evaluadas. Aparecerán a medida que venzan las predicciones activas.
+          </p>
+        </Card>
       ) : (
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-          {/* Column headers */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '28px 1.6fr 110px 90px 60px 1fr',
-            gap: 12, padding: '10px 20px',
-            background: 'var(--bg-muted)', borderBottom: '1px solid var(--border)',
-          }}>
-            <div />
-            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>Modelo</div>
-            <SortBtn label="MAE ↕" k="mae" />
-            <SortBtn label="% Dir ↕" k="dir" />
-            <SortBtn label="n ↕" k="n" />
-            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-hint)' }}>Recientes →</div>
+        <>
+          {/* Summary stat cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <Card>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 10 }}>Dirección correcta</div>
+              <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: globalAcc !== null ? dirColor(globalAcc) : 'var(--text-hint)' }}>
+                {globalAcc !== null ? `${globalAcc.toFixed(1)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 4 }}>{correct} de {total} cerradas</div>
+            </Card>
+            <Card>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 10 }}>Error de magnitud (MAE)</div>
+              <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: globalMae !== null ? maeColor(globalMae) : 'var(--text-hint)' }}>
+                {globalMae !== null ? `±${globalMae.toFixed(2)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 4 }}>promedio |real − predicho|</div>
+            </Card>
+            <Card>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 10 }}>Acuerdo de modelos</div>
+              <div style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: 'var(--text-muted)' }}>
+                {avgAgr !== null ? `${avgAgr.toFixed(0)}%` : '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 4 }}>promedio de consenso</div>
+            </Card>
           </div>
 
-          {sorted.map((stat, i) => (
-            <ModelRow
-              key={stat.model_name}
-              stat={stat}
-              rank={i + 1}
-              expanded={expanded === stat.model_name}
-              onToggle={() => setExpanded(p => p === stat.model_name ? null : stat.model_name)}
-            />
-          ))}
-        </div>
+          {/* By horizon */}
+          <Card>
+            <SLabel>Por horizonte</SLabel>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${DAILY_BUCKETS.length}, 1fr)`, gap: 8 }}>
+              {byHorizon.map(({ h, n, acc, mae: m }) => (
+                <div key={h} style={{
+                  background: 'var(--bg)', borderRadius: 8, padding: '12px 10px', textAlign: 'center',
+                  border: `1px solid ${acc !== null ? dirColor(acc) + '33' : 'var(--border)'}`,
+                }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8 }}>{h}d</div>
+                  {acc !== null ? (
+                    <>
+                      <div style={{ fontFamily: MONO, fontSize: 20, fontWeight: 700, color: dirColor(acc) }}>{acc.toFixed(0)}%</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-hint)', margin: '2px 0 6px' }}>dir</div>
+                      {m !== null && (
+                        <div style={{ fontFamily: MONO, fontSize: 12, color: maeColor(m), fontWeight: 600 }}>±{m.toFixed(1)}%</div>
+                      )}
+                      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>n={n}</div>
+                    </>
+                  ) : (
+                    <div style={{ color: 'var(--text-hint)', fontSize: 11 }}>—<br /><span style={{ fontSize: 10 }}>n={n}</span></div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Confidence calibration + Agreement */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Card>
+              <SLabel>Calibración de confianza</SLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {confBuckets.map(b => (
+                  <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 50 }}>{b.label}</span>
+                    <div style={{ flex: 1, height: 12, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                      {b.acc !== null && (
+                        <div style={{ height: '100%', width: `${Math.min(b.acc, 100)}%`, background: dirColor(b.acc), opacity: 0.75, borderRadius: 4 }} />
+                      )}
+                    </div>
+                    <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: b.acc !== null ? dirColor(b.acc) : 'var(--text-hint)', minWidth: 36, textAlign: 'right' }}>
+                      {b.acc !== null ? `${b.acc.toFixed(0)}%` : '—'}
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 30, textAlign: 'right' }}>n={b.n}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-hint)' }}>
+                Una predicción bien calibrada tiene ~70% de acierto cuando la confianza es 70%
+              </div>
+            </Card>
+
+            <Card>
+              <SLabel>Acuerdo entre modelos</SLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {agrBuckets.map(b => (
+                  <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 54 }}>{b.label}</span>
+                    <div style={{ flex: 1, height: 12, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                      {b.acc !== null && (
+                        <div style={{ height: '100%', width: `${Math.min(b.acc, 100)}%`, background: dirColor(b.acc), opacity: 0.75, borderRadius: 4 }} />
+                      )}
+                    </div>
+                    <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: b.acc !== null ? dirColor(b.acc) : 'var(--text-hint)', minWidth: 36, textAlign: 'right' }}>
+                      {b.acc !== null ? `${b.acc.toFixed(0)}%` : '—'}
+                    </span>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', minWidth: 30, textAlign: 'right' }}>n={b.n}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-hint)' }}>
+                Mayor acuerdo entre los 16 modelos → mayor probabilidad de acertar
+              </div>
+            </Card>
+          </div>
+
+          {/* Weekly accuracy trend */}
+          {weeks.length >= 2 && (
+            <Card>
+              <SLabel>Tendencia semanal — % dirección correcta</SLabel>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 56 }}>
+                {weeks.map(w => (
+                  <div key={w.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    <div style={{ width: '100%', height: 44, position: 'relative', background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                      {w.acc !== null && (
+                        <div style={{
+                          position: 'absolute', bottom: 0, left: 0, right: 0,
+                          height: `${Math.min(w.acc, 100)}%`,
+                          background: dirColor(w.acc), opacity: 0.8,
+                        }} />
+                      )}
+                    </div>
+                    <span style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-hint)' }}>
+                      {w.acc !== null ? `${w.acc.toFixed(0)}%` : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>
+                Cada barra = una semana · últimas {weeks.length} semanas con cierre
+              </div>
+            </Card>
+          )}
+
+          {/* Per ticker */}
+          <Card>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <SLabel style={{ marginBottom: 0 }}>Por activo</SLabel>
+              <div style={{ display: 'flex', gap: 5 }}>
+                {([['n', 'Más pred.'], ['acc', '% Dir.'], ['mae', 'Menor MAE']] as [SortTicker, string][]).map(([k, l]) => (
+                  <button key={k} onClick={() => setSortTicker(k)} style={{
+                    padding: '3px 9px', fontSize: 10, fontFamily: MONO, border: '1px solid var(--border)',
+                    borderRadius: 5, cursor: 'pointer', fontWeight: sortTicker === k ? 700 : 400,
+                    background: sortTicker === k ? 'var(--text)' : 'var(--bg)',
+                    color: sortTicker === k ? 'var(--bg)' : 'var(--text-muted)',
+                  }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                    {[
+                      { label: 'Ticker',         align: 'left'   as const },
+                      { label: 'Predicciones',   align: 'center' as const },
+                      { label: '% Dirección',    align: 'center' as const },
+                      { label: 'MAE',            align: 'center' as const },
+                      { label: 'Últimas',        align: 'left'   as const },
+                    ].map(h => (
+                      <th key={h.label} style={{ padding: '6px 10px', textAlign: h.align, color: 'var(--text-hint)', fontWeight: 500, fontSize: 11 }}>{h.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedTickers.map(t => {
+                    const recent = evaled.filter(p => p.assets?.ticker === t.ticker).slice(0, 12)
+                    return (
+                      <tr key={t.ticker} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '7px 10px', fontWeight: 700, fontFamily: MONO, fontSize: 12 }}>{t.ticker}</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'center', fontFamily: MONO, fontSize: 12, color: 'var(--text-muted)' }}>{t.n}</td>
+                        <td style={{ padding: '7px 10px', textAlign: 'center', fontFamily: MONO, fontWeight: 600, color: t.acc !== null ? dirColor(t.acc) : 'var(--text-hint)' }}>
+                          {t.acc !== null ? `${t.acc.toFixed(0)}%` : '—'}
+                        </td>
+                        <td style={{ padding: '7px 10px', textAlign: 'center', fontFamily: MONO, color: t.mae !== null ? maeColor(t.mae) : 'var(--text-hint)' }}>
+                          {t.mae !== null ? `±${t.mae.toFixed(1)}%` : '—'}
+                        </td>
+                        <td style={{ padding: '7px 10px' }}>
+                          <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                            {recent.map((p, i) => (
+                              <div key={i} title={`${p.direction_correct ? 'acertó' : 'falló'} · confianza ${(Number(p.confidence)*100).toFixed(0)}%`} style={{
+                                width: 9, height: 9, borderRadius: '50%',
+                                background: p.direction_correct ? '#22c55e' : '#ef4444',
+                                opacity: 0.35 + Number(p.confidence) * 0.65,
+                                flexShrink: 0,
+                              }} />
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
       )}
-
-      <p style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', margin: '12px 4px 0', lineHeight: 1.6 }}>
-        MAE = cuántos %pp promedio le erramos a la magnitud. Verde ≤1.5% · amarillo ≤4% · rojo {'>'}4%.
-        Clic en cualquier fila para ver el desglose por horizonte y activo.
-      </p>
-
-      <div style={{ marginTop: 32 }}>
-        <ModelPerformance />
-      </div>
     </section>
   )
 }
+

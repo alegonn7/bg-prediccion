@@ -12,7 +12,7 @@ import { ArgentinaSectionClient } from './ArgentinaSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ModelDetailStat, RawModelPred, ChangelogEntry, XgbHistoryEntry } from '@/app/page'
+import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 
@@ -26,8 +26,7 @@ type Props = {
   total: number
   assets: any[]
   openPredsSummary: any[]
-  modelDetailStats: ModelDetailStat[]
-  rawModelPreds: RawModelPred[]
+  dailyModelParams: DailyModelParam[]
   backtestRuns: BacktestRun[]
   horizonWeights: HorizonWeight[]
   modelLRParams: ModelLRParam[]
@@ -38,7 +37,7 @@ type Props = {
 
 export function DashboardClient({
   open, closed, modelWeights, hits, total, assets, openPredsSummary,
-  modelDetailStats, rawModelPreds, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
+  dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -110,7 +109,7 @@ export function DashboardClient({
         {active === 'intraday'      && <IntradaySectionClient />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
-        {active === 'analysis'      && <ModelAnalysisSection stats={modelDetailStats} rawPreds={rawModelPreds} />}
+        {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} />}
         {active === 'news'          && <NewsSectionClient />}
         {active === 'argentina'     && <ArgentinaSectionClient />}
         {active === 'entrenamiento' && (
@@ -121,6 +120,7 @@ export function DashboardClient({
             backtestModelStats={backtestModelStats}
             changelog={changelog}
             xgbHistory={xgbHistory}
+            dailyModelParams={dailyModelParams}
           />
         )}
         {active === 'modelos' && (
