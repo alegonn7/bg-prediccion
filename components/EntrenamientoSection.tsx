@@ -33,7 +33,7 @@ type Props = {
 }
 
 const XGB_MODELS = ['tendencia','momentum','volatilidad','volumen','estructura','elliott','velas','macro','fundamental','sentimiento','regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa']
-const DAILY_BUCKETS = [7, 14, 30, 60, 90]
+const DAILY_BUCKETS = [1, 7, 14, 30, 60, 90]
 
 function maeColor(v: number) {
   if (v <= 1.2) return '#22c55e'
