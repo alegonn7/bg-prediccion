@@ -37,6 +37,58 @@ function computeIntradayGroup(preds: ClosedIntradayPred[]): G {
 
 type DateRange = '30d' | '90d' | 'all'
 
+type HorizonStat = { label: string; n: number; ok: number; acc: number | null; mae: number | null }
+
+const DAILY_BUCKETS = [7, 14, 30, 60, 90]
+
+function bucketLabel(h: number): string {
+  return DAILY_BUCKETS.find(b => h <= b)?.toString().concat('d') ?? '90d'
+}
+
+function computeDailyByHorizon(preds: any[]): HorizonStat[] {
+  const groups: Record<string, { n: number; ok: number; maeArr: number[] }> = {}
+  for (const b of DAILY_BUCKETS) groups[`${b}d`] = { n: 0, ok: 0, maeArr: [] }
+  for (const p of preds) {
+    if (p.direction_correct === null) continue
+    const lbl = bucketLabel(Number(p.horizon_days))
+    if (!groups[lbl]) groups[lbl] = { n: 0, ok: 0, maeArr: [] }
+    groups[lbl].n++
+    if (p.direction_correct) groups[lbl].ok++
+    if (p.actual_final_pct != null && p.final_pct_predicted != null)
+      groups[lbl].maeArr.push(Math.abs(Number(p.actual_final_pct) - Number(p.final_pct_predicted)))
+  }
+  return DAILY_BUCKETS.map(b => {
+    const g = groups[`${b}d`]
+    return {
+      label: `${b}d`,
+      n: g.n, ok: g.ok,
+      acc: g.n >= 3 ? g.ok / g.n * 100 : null,
+      mae: g.maeArr.length >= 3 ? g.maeArr.reduce((s, v) => s + v, 0) / g.maeArr.length : null,
+    }
+  })
+}
+
+function computeIntradayByHorizon(preds: ClosedIntradayPred[]): HorizonStat[] {
+  const groups: Record<number, { n: number; ok: number; maeArr: number[] }> = {}
+  for (const p of preds) {
+    if (p.direction_correct === null) continue
+    const h = p.horizon_minutes
+    if (!groups[h]) groups[h] = { n: 0, ok: 0, maeArr: [] }
+    groups[h].n++
+    if (p.direction_correct) groups[h].ok++
+    if (p.actual_pct != null && p.final_pct_predicted != null)
+      groups[h].maeArr.push(Math.abs(Number(p.actual_pct) - Number(p.final_pct_predicted)))
+  }
+  return Object.entries(groups)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([h, g]) => ({
+      label: `${h}min`,
+      n: g.n, ok: g.ok,
+      acc: g.n >= 3 ? g.ok / g.n * 100 : null,
+      mae: g.maeArr.length >= 3 ? g.maeArr.reduce((s, v) => s + v, 0) / g.maeArr.length : null,
+    }))
+}
+
 function dirColor(v: number, target: number) {
   if (v >= target) return '#22c55e'
   if (v >= 54)     return '#d97706'
@@ -90,14 +142,21 @@ function verdict(g: G, dirTarget: number, maeTarget: number, isDaily: boolean) {
 // ─── Sub-component: one type block ───────────────────────────────────────────
 
 function TypeCard({
-  typeLabel, horizonNote, g, dirTarget, maeTarget, totalCycles, isDaily,
+  typeLabel, horizonNote, g, dirTarget, maeTarget, totalCycles, isDaily, horizonStats,
 }: {
   typeLabel: string; horizonNote: string; g: G
   dirTarget: number; maeTarget: number; totalCycles: number; isDaily: boolean
+  horizonStats: HorizonStat[]
 }) {
-  const v         = verdict(g, dirTarget, maeTarget, isDaily)
-  const progress  = Math.min(100, (totalCycles / CYCLES) * 100)
-  const hasData   = g.n >= 1
+  const v       = verdict(g, dirTarget, maeTarget, isDaily)
+  const hasData = g.n >= 1
+
+  // Find best horizons (min 3 predictions)
+  const qualified    = horizonStats.filter(h => h.n >= 3)
+  const bestDir      = qualified.length > 0 ? qualified.reduce((a, b) => (b.acc ?? -1) > (a.acc ?? -1) ? b : a) : null
+  const bestMae      = qualified.filter(h => h.mae !== null).length > 0
+    ? qualified.filter(h => h.mae !== null).reduce((a, b) => b.mae! < a.mae! ? b : a)
+    : null
 
   return (
     <div style={{
@@ -198,6 +257,54 @@ function TypeCard({
             </div>
           </div>
 
+          {/* Per-horizon breakdown */}
+          {horizonStats.some(h => h.n > 0) && (
+            <div style={{ padding: '20px 28px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 14 }}>
+                Por horizonte
+                {bestDir && (
+                  <span style={{ marginLeft: 14, fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#22c55e' }}>
+                    mejor dirección: <strong>{bestDir.label}</strong> ({bestDir.acc!.toFixed(0)}%)
+                  </span>
+                )}
+                {bestMae && (
+                  <span style={{ marginLeft: 14, fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#3b82f6' }}>
+                    mejor magnitud: <strong>{bestMae.label}</strong> (±{bestMae.mae!.toFixed(2)}%)
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {horizonStats.filter(h => h.n > 0).map(h => {
+                  const isBestDir = bestDir?.label === h.label
+                  const isBestMae = bestMae?.label === h.label
+                  const highlight = isBestDir || isBestMae
+                  return (
+                    <div key={h.label} style={{
+                      flex: '1 1 80px', minWidth: 80,
+                      background: isBestDir ? '#22c55e0d' : isBestMae ? '#3b82f60d' : 'var(--bg)',
+                      border: `1px solid ${isBestDir ? '#22c55e44' : isBestMae ? '#3b82f644' : 'var(--border)'}`,
+                      borderRadius: 8, padding: '10px 12px', textAlign: 'center',
+                    }}>
+                      <div style={{ fontFamily: MONO, fontSize: 11, color: highlight ? 'var(--text)' : 'var(--text-hint)', fontWeight: highlight ? 700 : 400, marginBottom: 6 }}>
+                        {h.label}
+                        {isBestDir && <span style={{ marginLeft: 4, color: '#22c55e', fontSize: 9 }}>★dir</span>}
+                        {isBestMae && !isBestDir && <span style={{ marginLeft: 4, color: '#3b82f6', fontSize: 9 }}>★mag</span>}
+                      </div>
+                      <div style={{ fontFamily: MONO, fontSize: 17, fontWeight: 700, color: h.acc !== null ? dirColor(h.acc, dirTarget) : 'var(--text-hint)', lineHeight: 1 }}>
+                        {h.acc !== null ? `${h.acc.toFixed(0)}%` : '—'}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-hint)', margin: '3px 0 5px' }}>dir</div>
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: h.mae !== null ? maeColor(h.mae, maeTarget) : 'var(--text-hint)', fontWeight: 600 }}>
+                        {h.mae !== null ? `±${h.mae.toFixed(1)}%` : '—'}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 2 }}>n={h.n}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Progress */}
           <div style={{ padding: '16px 28px', display: 'flex', alignItems: 'center', gap: 20 }}>
             <div style={{ flex: 1, maxWidth: 400 }}>
@@ -246,8 +353,10 @@ export function ScorecardSection({
     return closedIntradayPreds.filter(p => (p.closed_at ?? p.created_at) >= cutoff)
   }, [closedIntradayPreds, dateRange])
 
-  const daily    = computeDailyGroup(filteredDaily)
-  const intraday = computeIntradayGroup(filteredIntraday)
+  const daily           = computeDailyGroup(filteredDaily)
+  const intraday        = computeIntradayGroup(filteredIntraday)
+  const dailyByHorizon  = useMemo(() => computeDailyByHorizon(filteredDaily),    [filteredDaily])
+  const intradayByHorizon = useMemo(() => computeIntradayByHorizon(filteredIntraday), [filteredIntraday])
 
   return (
     <section style={{ marginBottom: 64 }}>
@@ -278,6 +387,7 @@ export function ScorecardSection({
           maeTarget={2.0}
           totalCycles={daily.n}
           isDaily={true}
+          horizonStats={dailyByHorizon}
         />
         <TypeCard
           typeLabel="Predicciones intradiarias"
@@ -287,6 +397,7 @@ export function ScorecardSection({
           maeTarget={0.5}
           totalCycles={intraday.n}
           isDaily={false}
+          horizonStats={intradayByHorizon}
         />
       </div>
     </section>

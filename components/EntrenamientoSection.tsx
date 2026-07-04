@@ -345,9 +345,9 @@ export function EntrenamientoSection({
                             n={p.train_samples.toLocaleString()}
                           </div>
                         )}
-                        {p.updated_at && (
+                        {p.last_updated && (
                           <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 2 }}>
-                            {relTime(p.updated_at)}
+                            {relTime(p.last_updated)}
                           </div>
                         )}
                       </>
