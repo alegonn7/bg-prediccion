@@ -367,31 +367,8 @@ function PredictionConfidenceBlock({
       border: '1px solid var(--border)',
     }}>
 
-      {/* Desvío: los dos escenarios complementarios */}
-      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 8 }}>
-        ¿Cuánto puede desviarse el resultado real de lo predicho?
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            En el <strong style={{ color: 'var(--text)' }}>75%</strong> de los casos, el desvío fue
-          </span>
-          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-            ≤ ±{p75.toFixed(1)}%
-          </span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            En el <strong style={{ color: '#f59e0b' }}>25%</strong> restante, el desvío fue
-          </span>
-          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#f59e0b' }}>
-            {p90 != null ? `> ±${p75.toFixed(1)}% (hasta ±${p90.toFixed(1)}%)` : `> ±${p75.toFixed(1)}%`}
-          </span>
-        </div>
-      </div>
-
       {/* Probabilidades de dirección + combinada */}
-      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
             Probabilidad de que {isUp ? 'suba' : 'baje'} de verdad
@@ -569,6 +546,11 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
           <div style={{ fontFamily: MONO, fontSize: 16, fontWeight: 700, color: dirColor }}>
             {predPct >= 0 ? '+' : ''}{predPct?.toFixed(2)}%
           </div>
+          {modelParam?.error_p75 != null && (
+            <div style={{ fontFamily: MONO, fontSize: 11, color: dirColor, opacity: 0.6, marginTop: 3 }}>
+              ±{modelParam.error_p75.toFixed(1)}% de margen
+            </div>
+          )}
         </div>
       </div>
 
