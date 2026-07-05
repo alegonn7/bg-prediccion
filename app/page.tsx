@@ -59,6 +59,10 @@ export type DailyModelParam = {
   train_samples: number | null
   avg_actual_mag: number | null
   last_updated: string | null
+  error_p25: number | null
+  error_p50: number | null
+  error_p75: number | null
+  error_p90: number | null
 }
 
 
@@ -122,7 +126,7 @@ async function getData() {
 
     supabase
       .from('model_signed_params_daily')
-      .select('horizon_bucket, lgbm_val_mae, val_mae_ridge, signed_r2, train_samples, avg_actual_mag, last_updated')
+      .select('horizon_bucket, lgbm_val_mae, val_mae_ridge, signed_r2, train_samples, avg_actual_mag, last_updated, error_p25, error_p50, error_p75, error_p90')
       .order('horizon_bucket'),
 
     supabase

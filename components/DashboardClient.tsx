@@ -106,7 +106,7 @@ export function DashboardClient({
         </nav>
 
         {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} />}
-        {active === 'open'          && <OpenPredictionsSection predictions={open} />}
+        {active === 'open'          && <OpenPredictionsSection predictions={open} dailyModelParams={dailyModelParams} />}
         {active === 'intraday'      && <IntradaySectionClient />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}

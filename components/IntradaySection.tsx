@@ -49,6 +49,16 @@ interface LRParam {
   avg_actual_mag?: number | null
 }
 
+interface SessionModelStat {
+  model_name: string
+  horizon_minutes: number
+  market_session: string
+  lgbm_val_mae: number | null
+  error_p75: number | null
+  error_p90: number | null
+  train_samples: number
+}
+
 const US_MARKET_HOLIDAYS = new Set([
   // 2026
   '2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
@@ -773,6 +783,57 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
   )
 }
 
+// ── Session Error Percentiles Panel ────────────────────────────────────────────
+function SessionErrorPanel({ stats }: { stats: SessionModelStat[] }) {
+  const horizons = [...new Set(stats.map(s => s.horizon_minutes))].sort((a, b) => a - b)
+
+  // Para cada horizonte, promedio de p75/p90 entre sesiones (pre/post/intra)
+  const byHorizon = horizons.map(h => {
+    const rows = stats.filter(s => s.horizon_minutes === h && s.error_p75 != null && s.error_p90 != null)
+    if (!rows.length) return null
+    const p75 = rows.reduce((s, r) => s + r.error_p75!, 0) / rows.length
+    const p90 = rows.reduce((s, r) => s + r.error_p90!, 0) / rows.length
+    const mae = rows.reduce((s, r) => s + (r.lgbm_val_mae ?? 0), 0) / rows.length
+    return { h, p75, p90, mae }
+  }).filter(Boolean) as { h: number; p75: number; p90: number; mae: number }[]
+
+  if (!byHorizon.length) return null
+
+  return (
+    <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px', marginBottom: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Margen de error real del modelo</div>
+      <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 14, lineHeight: 1.5 }}>
+        El error promedio (MAE) es un promedio — no garantiza que cada predicción esté dentro de ese margen.
+        Estos son los rangos reales medidos en datos de validación:
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${byHorizon.length}, 1fr)`, gap: 12 }}>
+        {byHorizon.map(({ h, p75, p90, mae }) => (
+          <div key={h} style={{ background: 'var(--bg)', borderRadius: 8, padding: '12px 10px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, textAlign: 'center' }}>{h} min</div>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 15, fontWeight: 700, color: '#22c55e', textAlign: 'center', marginBottom: 2 }}>
+              ±{mae.toFixed(2)}%
+            </div>
+            <div style={{ fontSize: 9, color: 'var(--text-hint)', textAlign: 'center', marginBottom: 10 }}>error promedio</div>
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, fontSize: 9, color: 'var(--text-hint)', lineHeight: 1.8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>3 de 4 veces</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#84cc16', fontWeight: 600 }}>≤ ±{p75.toFixed(2)}%</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>9 de 10 veces</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#f59e0b', fontWeight: 600 }}>≤ ±{p90.toFixed(2)}%</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 12, lineHeight: 1.6 }}>
+        ⚠️ <strong>Lo que esto significa:</strong> Si el modelo predice +0.5% en 60 minutos, hay 1 de cada 4 chances de que el error real sea mayor a ±{byHorizon.find(b => b.h === 60)?.p75?.toFixed(2) ?? '?'}%. La predicción es una estimación, no una garantía.
+      </div>
+    </div>
+  )
+}
+
 // ── LR Results Panel ───────────────────────────────────────────────────────────
 function LRResultsPanel({ params }: { params: LRParam[] }) {
   const models   = [...new Set(params.map(p => p.model_name))].sort()
@@ -970,6 +1031,7 @@ export function IntradaySectionClient() {
   const [trainLRMsg, setTrainLRMsg]         = useState('')
   const [lrProgress, setLRProgress]         = useState<{ done: number; total: number; phase: string; eta: number | null }>({ done: 0, total: 0, phase: '', eta: null })
   const [lrParams, setLRParams]             = useState<LRParam[]>([])
+  const [sessionStats, setSessionStats]     = useState<SessionModelStat[]>([])
   const marketOpen = isMarketOpen()
 
   // Light poll: open predictions + recent closed + weights — runs every 2 minutes
@@ -993,16 +1055,20 @@ export function IntradaySectionClient() {
 
   // Heavy load: individual model preds + LR params — only fetched when analysis/modelos tab is open
   const loadHeavy = useCallback(async () => {
-    const [{ data: mpData }, { data: lrData }] = await Promise.all([
+    const [{ data: mpData }, { data: lrData }, { data: sessData }] = await Promise.all([
       supabase.from('model_predictions_intraday')
         .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, assets!asset_id(ticker)')
         .eq('status','closed').not('direction_correct','is',null).limit(1000),
       supabase.from('model_learned_params_intraday')
         .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated, signed_r2, avg_actual_mag')
         .order('model_name'),
+      supabase.from('lgbm_session_models_intraday')
+        .select('model_name, horizon_minutes, market_session, lgbm_val_mae, error_p75, error_p90, train_samples')
+        .order('horizon_minutes'),
     ])
     setModelPreds((mpData ?? []) as unknown as ModelPred[])
     setLRParams((lrData ?? []) as LRParam[])
+    setSessionStats((sessData ?? []) as SessionModelStat[])
   }, [])
 
   // Poll light data every 2 minutes; lazy-load heavy data only when needed tabs are activated
@@ -1475,6 +1541,9 @@ export function IntradaySectionClient() {
                   }
                 `}</style>
               </div>
+
+              {/* Error percentiles por horizonte (LGBM session models) */}
+              {sessionStats.length > 0 && <SessionErrorPanel stats={sessionStats} />}
 
               {/* LR Results visualization */}
               <LRResultsPanel params={lrParams} />

@@ -59,6 +59,66 @@ function Card({ children, style = {} }: { children: React.ReactNode; style?: Rea
   )
 }
 
+// Bloque "para dummies" que explica la distribución del error
+function ErrorBandMini({ p75, p90 }: { p75: number; p90: number }) {
+  return (
+    <div style={{ fontSize: 9, color: 'var(--text-hint)', lineHeight: 1.6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>3 de 4 veces</span>
+        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16', fontWeight: 600 }}>
+          ≤ ±{p75.toFixed(2)}%
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>9 de 10 veces</span>
+        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b', fontWeight: 600 }}>
+          ≤ ±{p90.toFixed(2)}%
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// Badge de confianza para usar en predicciones (exportado para otras secciones)
+export function ErrorBadge({
+  predicted, p75, p90, label = '',
+}: { predicted: number; p75: number; p90: number; label?: string }) {
+  const absPred = Math.abs(predicted)
+  // Confianza: cuántas veces entra el error típico en la predicción
+  const ratio = p75 > 0 ? absPred / p75 : 0
+
+  let color: string
+  let text: string
+  if (ratio >= 1.5) {
+    color = '#22c55e'
+    text = 'Señal clara'
+  } else if (ratio >= 0.8) {
+    color = '#f59e0b'
+    text = 'Señal moderada'
+  } else {
+    color = '#ef4444'
+    text = 'Señal débil'
+  }
+
+  return (
+    <div style={{ fontSize: 10, lineHeight: 1.5 }}>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+        background: color + '18', border: `1px solid ${color}44`,
+        borderRadius: 5, padding: '2px 7px', marginBottom: 4,
+      }}>
+        <span style={{ fontSize: 8, color }}>●</span>
+        <span style={{ color, fontWeight: 600 }}>{text}</span>
+        {label && <span style={{ color: 'var(--text-hint)' }}>· {label}</span>}
+      </div>
+      <div style={{ fontSize: 9, color: 'var(--text-hint)' }}>
+        En 3 de 4 casos el error fue <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16' }}>≤ ±{p75.toFixed(2)}%</span>
+        {' '}y en 9 de 10 fue <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b' }}>≤ ±{p90.toFixed(2)}%</span>
+      </div>
+    </div>
+  )
+}
+
 type JobState = 'idle' | 'running' | 'done' | 'error'
 
 export function EntrenamientoSection({
@@ -339,9 +399,14 @@ export function EntrenamientoSection({
                         <div style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 16, fontWeight: 700, color: maeColor(p.lgbm_val_mae) }}>
                           ±{p.lgbm_val_mae.toFixed(2)}%
                         </div>
-                        <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 2 }}>lgbm mae</div>
+                        <div style={{ fontSize: 9, color: 'var(--text-hint)', marginTop: 2 }}>error promedio</div>
+                        {p.error_p75 != null && p.error_p90 != null && (
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', textAlign: 'left' }}>
+                            <ErrorBandMini p75={p.error_p75} p90={p.error_p90} />
+                          </div>
+                        )}
                         {p.train_samples != null && (
-                          <div style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 10, color: 'var(--text-hint)', marginTop: 4 }}>
+                          <div style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 10, color: 'var(--text-hint)', marginTop: 6 }}>
                             n={p.train_samples.toLocaleString()}
                           </div>
                         )}

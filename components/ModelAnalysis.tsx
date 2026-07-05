@@ -254,6 +254,16 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                 {globalMae !== null ? `±${globalMae.toFixed(2)}%` : '—'}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 4 }}>promedio |real − predicho|</div>
+              {globalMae !== null && (
+                <div style={{
+                  marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
+                  fontSize: 10, color: 'var(--text-hint)', lineHeight: 1.7,
+                }}>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4 }}>¿Qué significa esto?</div>
+                  El MAE es un <em>promedio</em>. En ~4 de cada 10 predicciones el error real fue <strong>mayor</strong> que ±{globalMae.toFixed(2)}%.
+                  El modelo estima una dirección y magnitud, pero no hay garantía por predicción individual.
+                </div>
+              )}
             </Card>
             <Card>
               <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 10 }}>Acuerdo de modelos</div>

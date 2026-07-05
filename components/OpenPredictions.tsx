@@ -3,6 +3,8 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { PredictionDetailModal } from './PredictionDetailModal'
 import { InfoTip } from './InfoTip'
 import { Pagination } from './Pagination'
+import { ErrorBadge } from './EntrenamientoSection'
+import type { DailyModelParam } from '@/app/page'
 
 const PAGE_SIZE = 9
 
@@ -80,7 +82,13 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
   )
 }
 
-export function OpenPredictionsSection({ predictions: initialPredictions }: { predictions: ConsensusPrediction[] }) {
+export function OpenPredictionsSection({
+  predictions: initialPredictions,
+  dailyModelParams = [],
+}: {
+  predictions: ConsensusPrediction[]
+  dailyModelParams?: DailyModelParam[]
+}) {
   const [predictions,    setPredictions]    = useState(initialPredictions)
   const [selected,       setSelected]       = useState<ConsensusPrediction | null>(null)
   const [dirFilter,      setDirFilter]      = useState<DirFilter>('all')
@@ -295,6 +303,7 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
                     isConfirming={confirming === p.id}
                     onCancelDelete={() => setConfirming(null)}
                     isDeleting={deleting === p.id}
+                    modelParam={dailyModelParams.find(d => d.horizon_bucket === p.horizon_days) ?? null}
                   />
                 ))}
               </div>
@@ -322,11 +331,12 @@ export function OpenPredictionsSection({ predictions: initialPredictions }: { pr
   )
 }
 
-function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting }: {
+function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting, modelParam }: {
   p: ConsensusPrediction
   livePrice: LivePrice | null
   onClick: () => void
   onDelete: () => void
+  modelParam: DailyModelParam | null
   onCancelDelete: () => void
   isConfirming: boolean
   isDeleting: boolean
@@ -475,6 +485,18 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
           </div>
         </div>
       </div>
+
+      {/* Error band: qué tan probable es que la predicción sea correcta */}
+      {modelParam?.error_p75 != null && modelParam?.error_p90 != null && (
+        <div style={{ marginBottom: 14 }} onClick={e => e.stopPropagation()}>
+          <ErrorBadge
+            predicted={predPct}
+            p75={modelParam.error_p75}
+            p90={modelParam.error_p90}
+            label={`${p.horizon_days}d`}
+          />
+        </div>
+      )}
 
       {/* Movement from prediction open */}
       {movePct !== null && (
