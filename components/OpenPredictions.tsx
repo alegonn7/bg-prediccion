@@ -342,79 +342,77 @@ function PredictionConfidenceBlock({
   const abs = Math.abs(predicted)
   const isUp = predicted >= 0
 
-  // P(dir correct) = 0.5 + 0.5 * P(|error| ≤ |predicted|)
-  // Estimated from percentiles
+  // Probabilidad de dirección: P = 0.5 + 0.5 × P(|e| ≤ |pred|)
   let dirPct: number
-  let dirLabel: string
   let dirColor: string
   if (p90 != null && abs >= p90) {
-    dirPct = 95; dirLabel = 'Muy alta'; dirColor = '#22c55e'
+    dirPct = 95; dirColor = '#22c55e'
   } else if (p75 != null && abs >= p75) {
-    dirPct = 87; dirLabel = 'Alta'; dirColor = '#84cc16'
+    dirPct = 87; dirColor = '#84cc16'
   } else if (p50 != null && abs >= p50) {
-    dirPct = 75; dirLabel = 'Media'; dirColor = '#f59e0b'
+    dirPct = 75; dirColor = '#f59e0b'
   } else {
-    dirPct = 60; dirLabel = 'Baja'; dirColor = '#ef4444'
+    dirPct = 60; dirColor = '#ef4444'
   }
 
-  const rows = [
-    { freq: '1 de cada 2 veces', val: p50, note: 'error mediano' },
-    { freq: '3 de cada 4 veces', val: p75, note: 'error habitual', bold: true },
-    { freq: '9 de cada 10 veces', val: p90, note: 'error máximo probable' },
-  ]
+  // Prob combinada: dirección correcta Y desvío dentro del rango declarado (p75 = 75%)
+  const combinedPct = Math.round(dirPct * 75 / 100)
+  const combinedColor = combinedPct >= 70 ? '#22c55e' : combinedPct >= 55 ? '#f59e0b' : '#ef4444'
+
+  if (p75 == null) return null
 
   return (
     <div style={{
       background: 'var(--bg-muted)', borderRadius: 10, padding: '12px 14px',
       border: '1px solid var(--border)',
     }}>
-      <div style={{
-        fontFamily: MONO, fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
-        textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10,
-      }}>
-        ¿Cuánto suele equivocarse el modelo?
-      </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-        {rows.map(row => row.val != null && (
-          <div key={row.freq} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-              {row.freq}
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{
-                fontFamily: MONO, fontSize: row.bold ? 13 : 11,
-                fontWeight: row.bold ? 700 : 500,
-                color: row.bold ? 'var(--text)' : 'var(--text-hint)',
-              }}>
-                ±{row.val.toFixed(1)}%
-              </span>
-            </div>
-          </div>
-        ))}
+      {/* Desvío: los dos escenarios complementarios */}
+      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 8 }}>
+        ¿Cuánto puede desviarse el resultado real de lo predicho?
       </div>
-
-      <div style={{
-        borderTop: '1px solid var(--border)', paddingTop: 10,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
-      }}>
-        <div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
-            Probabilidad de acertar la dirección
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 2, lineHeight: 1.4 }}>
-            Pred. {isUp ? '+' : ''}{predicted.toFixed(1)}% vs error habitual ±{p75?.toFixed(1)}%
-          </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            En el <strong style={{ color: 'var(--text)' }}>75%</strong> de los casos, el desvío fue
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+            ≤ ±{p75.toFixed(1)}%
+          </span>
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: dirColor }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            En el <strong style={{ color: '#f59e0b' }}>25%</strong> restante, el desvío fue
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: '#f59e0b' }}>
+            {p90 != null ? `> ±${p75.toFixed(1)}% (hasta ±${p90.toFixed(1)}%)` : `> ±${p75.toFixed(1)}%`}
+          </span>
+        </div>
+      </div>
+
+      {/* Probabilidades de dirección + combinada */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            Probabilidad de que {isUp ? 'suba' : 'baje'} de verdad
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, color: dirColor }}>
             ~{dirPct}%
-          </div>
-          <div style={{ fontSize: 10, color: dirColor, marginTop: 1 }}>
-            {dirLabel}
-          </div>
+          </span>
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: combinedColor + '18', borderRadius: 7, padding: '6px 10px', marginTop: 2,
+        }}>
+          <span style={{ fontSize: 11, color: 'var(--text)', fontWeight: 600 }}>
+            Pred. correcta en conjunto
+          </span>
+          <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: combinedColor }}>
+            ~{combinedPct}%
+          </span>
         </div>
       </div>
+
     </div>
   )
 }
