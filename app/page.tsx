@@ -95,7 +95,7 @@ async function getData() {
       `)
       .eq('status', 'open')
       .order('created_at', { ascending: false })
-      .limit(1000),
+      .limit(500),
 
     supabase
       .from('consensus_predictions')
@@ -104,14 +104,14 @@ async function getData() {
         asset_id, assets(ticker, name)`)
       .eq('status', 'closed')
       .order('target_date', { ascending: false })
-      .limit(2000),
+      .limit(500),
 
     supabase
       .from('consensus_predictions_intraday')
       .select('id, direction, direction_correct, actual_pct, final_pct_predicted, agreement_pct, horizon_minutes, closed_at, created_at, asset_id, assets(ticker, name)')
       .eq('status', 'closed')
       .order('closed_at', { ascending: false })
-      .limit(2000),
+      .limit(500),
 
     supabase
       .from('model_weights')
@@ -147,7 +147,7 @@ async function getData() {
     supabase
       .from('backtest_stats')
       .select('model_name, horizon_bucket, correct_count, total_count, brier_sum, brier_count, mae_sum, mae_count')
-      .limit(2000),
+      .limit(500),
 
     supabase
       .from('model_changelog')
@@ -243,7 +243,7 @@ async function getData() {
   }
 }
 
-export const revalidate = 300
+export const revalidate = 600
 
 export default async function Dashboard() {
   const {
