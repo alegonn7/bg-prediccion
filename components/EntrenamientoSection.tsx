@@ -59,22 +59,14 @@ function Card({ children, style = {} }: { children: React.ReactNode; style?: Rea
   )
 }
 
-// Bloque "para dummies" que explica la distribución del error
+// Bloque que muestra la distribución del error en una línea
 function ErrorBandMini({ p75, p90 }: { p75: number; p90: number }) {
   return (
     <div style={{ fontSize: 9, color: 'var(--text-hint)', lineHeight: 1.6 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>3 de 4 veces</span>
-        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16', fontWeight: 600 }}>
-          ≤ ±{p75.toFixed(2)}%
-        </span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>9 de 10 veces</span>
-        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b', fontWeight: 600 }}>
-          ≤ ±{p90.toFixed(2)}%
-        </span>
-      </div>
+      <span>75% prob. desvío ≤ </span>
+      <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16', fontWeight: 600 }}>±{p75.toFixed(2)}%</span>
+      <span>  ·  90% ≤ </span>
+      <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b', fontWeight: 600 }}>±{p90.toFixed(2)}%</span>
     </div>
   )
 }
@@ -112,8 +104,10 @@ export function ErrorBadge({
         {label && <span style={{ color: 'var(--text-hint)' }}>· {label}</span>}
       </div>
       <div style={{ fontSize: 9, color: 'var(--text-hint)' }}>
-        En 3 de 4 casos el error fue <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16' }}>≤ ±{p75.toFixed(2)}%</span>
-        {' '}y en 9 de 10 fue <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b' }}>≤ ±{p90.toFixed(2)}%</span>
+        <span>75% prob. desvío ≤ </span>
+        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#84cc16' }}>±{p75.toFixed(2)}%</span>
+        <span>  ·  90% ≤ </span>
+        <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: '#f59e0b' }}>±{p90.toFixed(2)}%</span>
       </div>
     </div>
   )
