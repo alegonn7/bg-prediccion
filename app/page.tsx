@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase-server'
 import { DashboardClient } from '@/components/DashboardClient'
 import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection'
+import { bolsaKey, calibKey, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
 
 export type { ModelLRParam, BacktestModelStat }
 
@@ -83,6 +84,8 @@ async function getData() {
     { data: backtestStatsRaw },
     { data: changelogRaw },
     { data: xgbHistoryRaw },
+    { data: scorecardBolsasRaw },
+    { data: confidenceCalibrationRaw },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -101,7 +104,7 @@ async function getData() {
       .from('consensus_predictions')
       .select(`id, direction, confidence, direction_correct, actual_final_pct,
         final_pct_predicted, agreement_pct, target_date, horizon_days, created_at,
-        asset_id, assets(ticker, name)`)
+        asset_id, assets(ticker, name, currency)`)
       .eq('status', 'closed')
       .order('target_date', { ascending: false })
       .limit(500),
@@ -160,6 +163,14 @@ async function getData() {
       .select('id, model_name, horizon_bucket, old_accuracy, new_accuracy, old_samples, new_samples, trained_at')
       .order('trained_at', { ascending: false })
       .limit(300),
+
+    supabase
+      .from('scorecard_bolsas')
+      .select('asset_id, currency, horizon_bucket, horizon_unit, n_closed, n_correct, baseline_rate, baseline_n, mcnemar_n10, mcnemar_n01, p_value, estado, last_updated'),
+
+    supabase
+      .from('confidence_calibration')
+      .select('currency, horizon_bucket, horizon_unit, bin_label, bin_lo, bin_hi, n, n_correct, calibrated_rate'),
   ])
 
   // Attach current prices to open predictions
@@ -224,9 +235,24 @@ async function getData() {
     mae_avg:   s.mae_count   > 0 ? s.mae_sum    / s.mae_count   : 0,
   }))
 
+  // Etapa 3: mapas de scorecard por bolsa (asset+moneda+horizonte) y curva de
+  // calibración de confianza por (moneda, horizonte) — ver dashboard/lib/scorecard.ts.
+  const scorecardBolsas: Record<string, ScorecardBolsa> = {}
+  for (const r of (scorecardBolsasRaw ?? []) as ScorecardBolsa[]) {
+    scorecardBolsas[bolsaKey(r.asset_id, r.currency, r.horizon_bucket, r.horizon_unit)] = r
+  }
+  const confidenceCalibration: Record<string, CalibrationBin[]> = {}
+  for (const r of (confidenceCalibrationRaw ?? []) as CalibrationBin[]) {
+    const key = calibKey(r.currency, r.horizon_bucket, r.horizon_unit)
+    if (!confidenceCalibration[key]) confidenceCalibration[key] = []
+    confidenceCalibration[key].push(r)
+  }
+
   return {
     open: openWithPrices,
     closed: closedAll,
+    scorecardBolsas,
+    confidenceCalibration,
     closedIntraday: (closedIntraday ?? []) as unknown as ClosedIntradayPred[],
     modelWeights: modelWeights ?? [],
     hits:  closedAll.filter((c: any) => c.direction_correct).length,
@@ -251,6 +277,7 @@ export default async function Dashboard() {
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog, xgbHistory,
+    scorecardBolsas, confidenceCalibration,
   } = await getData()
   return (
     <DashboardClient
@@ -269,6 +296,8 @@ export default async function Dashboard() {
       backtestModelStats={backtestModelStats}
       changelog={changelog}
       xgbHistory={xgbHistory}
+      scorecardBolsas={scorecardBolsas}
+      confidenceCalibration={confidenceCalibration}
     />
   )
 }

@@ -6,6 +6,8 @@ import {
 } from 'recharts'
 import { supabase } from '@/lib/supabase'
 import { InfoTip } from './InfoTip'
+import { SemaforoDetail } from './Semaforo'
+import { findCalibratedConfidence, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 
@@ -299,15 +301,20 @@ function VoteVsPctExplanation({ bull, bear, predPct }: { bull: number; bear: num
 export function PredictionDetailModal({
   prediction,
   onClose,
+  bolsa = null,
+  calibBins,
 }: {
   prediction: ConsensusPrediction
   onClose: () => void
+  bolsa?: ScorecardBolsa | null
+  calibBins?: CalibrationBin[]
 }) {
   const [models, setModels] = useState<ModelPred[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const p = prediction
+  const calibratedConf = findCalibratedConfidence(p.confidence, calibBins)
   const predPct = p.final_pct_predicted
   const up = predPct >= 0
   const dirColor = up ? 'var(--up)' : 'var(--down)'
@@ -390,8 +397,12 @@ export function PredictionDetailModal({
           {[
             { label: 'Al predecir', value: `$${p.price_at_creation?.toFixed(2)}`, tip: null },
             {
-              label: 'Confianza', value: `${Math.round(p.confidence * 100)}%`,
-              tip: 'Promedio ponderado de la certeza de cada modelo sobre su propia predicción. Se basa en la fuerza de señales técnicas internas. No indica si la predicción es correcta, sino cuán convencido está el modelo.',
+              label: 'Confianza', value: calibratedConf != null
+                ? `${Math.round(p.confidence * 100)}% (cal. ${Math.round(calibratedConf * 100)}%)`
+                : `${Math.round(p.confidence * 100)}%`,
+              tip: calibratedConf != null
+                ? `Cruda: ${Math.round(p.confidence * 100)}%. Calibrada contra el historial real de esta moneda+horizonte: ${Math.round(calibratedConf * 100)}% — lo que de verdad acertamos cuando el sistema reportó una confianza en este rango.`
+                : 'Promedio ponderado de la certeza de cada modelo sobre su propia predicción. Todavía no hay historial suficiente para calibrar este número — se muestra crudo.',
             },
             {
               label: 'Acuerdo', value: `${p.agreement_pct}%`,
@@ -407,6 +418,9 @@ export function PredictionDetailModal({
             </div>
           ))}
         </div>
+
+        {/* Semáforo de la bolsa (Etapa 3) */}
+        <SemaforoDetail bolsa={bolsa ?? null} />
 
         {/* Vote bar */}
         <div style={{ background: 'var(--bg-muted)', borderRadius: 12, padding: '14px 16px' }}>

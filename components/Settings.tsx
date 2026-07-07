@@ -10,7 +10,6 @@ const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const AUTH_HEADER   = 'Bearer ' + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 const SECS_PER_PRED = 10
-const FINNHUB_KEY   = 'd8vg3fhr01qgrv4numtgd8vg3fhr01qgrv4numu0'
 
 type Asset    = { id: string; ticker: string; name: string; sector: string | null; asset_class: string; currency: string; is_active: boolean; horizon_days: number }
 type OpenPred = { id: string; ticker: string; horizon_days: number; direction: string; confidence: number; agreement_pct: number; final_pct_predicted: number; target_date: string; created_at: string }
@@ -19,7 +18,7 @@ type TickerHint = { status: 'idle' | 'checking' | 'suggestions' | 'not_found'; s
 
 async function checkTicker(ticker: string): Promise<{ valid: boolean; suggestions: { symbol: string; description: string }[] }> {
   try {
-    const res  = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`)
+    const res  = await fetch(`/api/finnhub/search?q=${encodeURIComponent(ticker)}`)
     const data = await res.json()
     const results = (data.result ?? []) as { displaySymbol?: string; symbol: string; description: string; type: string }[]
     const exact = results.some(r => (r.displaySymbol ?? r.symbol).toUpperCase() === ticker.toUpperCase())

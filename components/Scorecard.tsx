@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import type { ClosedIntradayPred } from '@/app/page'
+import { ESTADO_META, type ScorecardBolsa, type Estado } from '@/lib/scorecard'
+import { InfoTip } from './InfoTip'
 
 const MONO   = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const CYCLES = 400
@@ -9,7 +11,22 @@ type ModelWeight = {
   direction_accuracy: number | null; sample_size: number | null; mae_avg: number | null
 }
 
-type G = { n: number; ok: number; acc: number | null; mae: number | null }
+type G = {
+  n: number; ok: number; acc: number | null; mae: number | null
+  capturedPct: number | null; capturedN: number
+}
+
+// % del movimiento real capturado: final_pct_predicted / actual , solo cuando el signo coincide.
+// Se ignoran movimientos reales casi nulos (<0.05%) porque el ratio se dispara sin aportar señal.
+function computeCaptured(evaled: any[], actualField: string): { capturedPct: number | null; capturedN: number } {
+  const ratios = evaled
+    .filter(p => p.direction_correct && p[actualField] != null && p.final_pct_predicted != null && Math.abs(Number(p[actualField])) >= 0.05)
+    .map(p => Number(p.final_pct_predicted) / Number(p[actualField]) * 100)
+  return {
+    capturedPct: ratios.length > 0 ? ratios.reduce((s, v) => s + v, 0) / ratios.length : null,
+    capturedN: ratios.length,
+  }
+}
 
 // Daily: actual_final_pct field
 function computeDailyGroup(preds: any[]): G {
@@ -20,7 +37,8 @@ function computeDailyGroup(preds: any[]): G {
   const mae    = maePs.length > 0
     ? maePs.reduce((s: number, p: any) => s + Math.abs(Number(p.actual_final_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
     : null
-  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae }
+  const { capturedPct, capturedN } = computeCaptured(evaled, 'actual_final_pct')
+  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae, capturedPct, capturedN }
 }
 
 // Intraday: actual_pct field
@@ -32,7 +50,8 @@ function computeIntradayGroup(preds: ClosedIntradayPred[]): G {
   const mae    = maePs.length > 0
     ? maePs.reduce((s, p) => s + Math.abs(Number(p.actual_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
     : null
-  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae }
+  const { capturedPct, capturedN } = computeCaptured(evaled, 'actual_pct')
+  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae, capturedPct, capturedN }
 }
 
 type DateRange = '30d' | '90d' | 'all'
@@ -97,6 +116,12 @@ function dirColor(v: number, target: number) {
 function maeColor(v: number, target: number) {
   if (v <= target)         return '#22c55e'
   if (v <= target * 1.75)  return '#d97706'
+  return '#ef4444'
+}
+function capturedColor(v: number) {
+  const dist = Math.abs(v - 100)
+  if (dist <= 30) return '#22c55e'
+  if (dist <= 60) return '#d97706'
   return '#ef4444'
 }
 
@@ -257,6 +282,28 @@ function TypeCard({
             </div>
           </div>
 
+          {/* % del movimiento real capturado */}
+          <div style={{ padding: '20px 28px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 10 }}>
+              % del movimiento real capturado (cuando acertamos la dirección)
+            </div>
+            {g.capturedPct !== null ? (
+              <>
+                <div style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, color: capturedColor(g.capturedPct) }}>
+                  {g.capturedPct.toFixed(0)}%
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, maxWidth: 520 }}>
+                  Promedio de <code>predicho ÷ real</code> sobre {g.capturedN} predicción{g.capturedN !== 1 ? 'es' : ''} con dirección correcta.
+                  100% = predijimos exactamente la magnitud real; menos de 100% significa que nos quedamos cortos (ej. predecir +0.6% cuando la acción se movió +6%).
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--text-hint)' }}>
+                Sin datos suficientes todavía (se necesitan predicciones cerradas con dirección correcta y movimiento real no nulo).
+              </div>
+            )}
+          </div>
+
           {/* Per-horizon breakdown */}
           {horizonStats.some(h => h.n > 0) && (
             <div style={{ padding: '20px 28px', borderBottom: '1px solid var(--border)' }}>
@@ -323,6 +370,43 @@ function TypeCard({
   )
 }
 
+// ─── Resumen del semáforo de bolsas (Etapa 3) ────────────────────────────────
+function BolsasSemaforoSummary({ scorecardBolsas }: { scorecardBolsas: Record<string, ScorecardBolsa> }) {
+  const bolsas = Object.values(scorecardBolsas)
+  const counts: Record<Estado, number> = { insuficiente: 0, acumulando: 0, validado: 0, sin_edge: 0 }
+  for (const b of bolsas) counts[b.estado]++
+  const order: Estado[] = ['validado', 'acumulando', 'sin_edge', 'insuficiente']
+
+  if (bolsas.length === 0) return null
+
+  return (
+    <div style={{
+      background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14,
+      boxShadow: 'var(--shadow)', padding: '20px 28px', marginBottom: 20,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700 }}>Semáforo por bolsa</div>
+        <InfoTip text='Una "bolsa" es un activo + moneda + horizonte específico. Cada una se evalúa contra su propio baseline empírico ("¿cuánto sube este activo, a este horizonte, en promedio?"), no contra un 50% fijo — y hace falta al menos 400 cierres para declarar "validado" o "sin edge confirmado".' />
+        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', marginLeft: 'auto' }}>{bolsas.length} bolsas activas</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        {order.map(estado => {
+          const meta = ESTADO_META[estado]
+          return (
+            <div key={estado} style={{ background: meta.bg, borderRadius: 10, padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.dot, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: meta.color, fontWeight: 600 }}>{meta.label}</span>
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 24, fontWeight: 700, color: meta.color }}>{counts[estado]}</div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 const DATE_OPTS: { id: DateRange; label: string }[] = [
@@ -332,10 +416,11 @@ const DATE_OPTS: { id: DateRange; label: string }[] = [
 ]
 
 export function ScorecardSection({
-  modelWeights, hits, total, closedPreds = [], closedIntradayPreds = [],
+  modelWeights, hits, total, closedPreds = [], closedIntradayPreds = [], scorecardBolsas = {},
 }: {
   modelWeights: ModelWeight[]; hits: number; total: number
   closedPreds?: any[]; closedIntradayPreds?: ClosedIntradayPred[]
+  scorecardBolsas?: Record<string, ScorecardBolsa>
 }) {
   const [dateRange, setDateRange] = useState<DateRange>('all')
 
@@ -377,6 +462,8 @@ export function ScorecardSection({
           ))}
         </div>
       </div>
+
+      <BolsasSemaforoSummary scorecardBolsas={scorecardBolsas} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <TypeCard

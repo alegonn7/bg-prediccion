@@ -1,9 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { Pagination } from './Pagination'
+import { SemaforoBadge } from './Semaforo'
+import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
-const COLS = '0.7fr 0.8fr 1fr 1fr 1fr 1.4fr'
+const COLS = '0.7fr 0.8fr 1fr 1fr 1fr 1fr 1.4fr'
 const PAGE_SIZE = 15
 
 type ClosedConsensus = {
@@ -14,7 +16,9 @@ type ClosedConsensus = {
   final_pct_predicted: number | null
   agreement_pct: number | null
   target_date: string
-  assets: { ticker: string; name: string } | null
+  horizon_days: number
+  asset_id: string
+  assets: { ticker: string; name: string; currency: string } | null
 }
 
 type DateFilter = '7d' | '30d' | 'month' | 'all'
@@ -38,7 +42,7 @@ const DATE_FILTER_OPTS: { id: DateFilter; label: string }[] = [
   { id: 'all',   label: 'Todo' },
 ]
 
-export function ClosedPredictionsSection({ results }: { results: ClosedConsensus[] }) {
+export function ClosedPredictionsSection({ results, scorecardBolsas = {} }: { results: ClosedConsensus[]; scorecardBolsas?: Record<string, ScorecardBolsa> }) {
   const [page, setPage] = useState(1)
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
 
@@ -103,6 +107,7 @@ export function ClosedPredictionsSection({ results }: { results: ClosedConsensus
               <div>Predicho</div>
               <div>Real</div>
               <div>Resultado</div>
+              <div>Bolsa</div>
             </div>
 
             {pageItems.map((r, i) => {
@@ -112,6 +117,7 @@ export function ClosedPredictionsSection({ results }: { results: ClosedConsensus
               const predPct  = r.final_pct_predicted
               const actualPct = r.actual_final_pct
               const actualUp  = actualPct != null && actualPct >= 0
+              const bolsa    = asset ? scorecardBolsas[bolsaKey(r.asset_id, asset.currency, r.horizon_days)] ?? null : null
 
               return (
                 <div key={r.id} style={{
@@ -150,6 +156,7 @@ export function ClosedPredictionsSection({ results }: { results: ClosedConsensus
                       <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-hint)' }}>pendiente</span>
                     )}
                   </div>
+                  <div><SemaforoBadge bolsa={bolsa} compact /></div>
                 </div>
               )
             })}

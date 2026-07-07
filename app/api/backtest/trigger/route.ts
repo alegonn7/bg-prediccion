@@ -22,6 +22,9 @@ async function fireAsset(ticker: string): Promise<{ ticker: string; ok: boolean 
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+
   const { searchParams } = new URL(req.url)
   const all   = searchParams.get('all')   === 'true'
   const force = searchParams.get('force') === 'true'

@@ -3,14 +3,15 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import { PredictionDetailModal } from './PredictionDetailModal'
 import { InfoTip } from './InfoTip'
 import { Pagination } from './Pagination'
+import { SemaforoBadge } from './Semaforo'
 import type { DailyModelParam } from '@/app/page'
+import { bolsaKey, calibKey, findCalibratedConfidence, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
 
 const PAGE_SIZE = 9
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const AUTH_HEADER   = 'Bearer ' + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-const FINNHUB_KEY   = 'd8vg3fhr01qgrv4numtgd8vg3fhr01qgrv4numu0'
 const LIVE_POLL_MS  = 10 * 60 * 1000   // 10 minutes
 
 type LivePrice = { price: number; changePct: number | null; fetchedAt: number }
@@ -42,6 +43,7 @@ type ConsensusPrediction = {
   current_date: string | null
   price_path: any[] | null
   model_prediction_ids: string[] | null
+  asset_id: string
   assets: { ticker: string; name: string; asset_class: string; currency: string } | null
 }
 
@@ -84,9 +86,13 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
 export function OpenPredictionsSection({
   predictions: initialPredictions,
   dailyModelParams = [],
+  scorecardBolsas = {},
+  confidenceCalibration = {},
 }: {
   predictions: ConsensusPrediction[]
   dailyModelParams?: DailyModelParam[]
+  scorecardBolsas?: Record<string, ScorecardBolsa>
+  confidenceCalibration?: Record<string, CalibrationBin[]>
 }) {
   const [predictions,    setPredictions]    = useState(initialPredictions)
   const [selected,       setSelected]       = useState<ConsensusPrediction | null>(null)
@@ -119,7 +125,7 @@ export function OpenPredictionsSection({
         const results = await Promise.allSettled(
           batch.map(async ticker => {
             const r = await fetch(
-              `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${FINNHUB_KEY}`
+              `/api/finnhub/quote?symbol=${encodeURIComponent(ticker)}`
             )
             if (!r.ok) throw new Error(`${r.status}`)
             const d = await r.json()
@@ -303,6 +309,8 @@ export function OpenPredictionsSection({
                     onCancelDelete={() => setConfirming(null)}
                     isDeleting={deleting === p.id}
                     modelParam={dailyModelParams.find(d => d.horizon_bucket === p.horizon_days) ?? null}
+                    bolsa={p.assets ? scorecardBolsas[bolsaKey(p.asset_id, p.assets.currency, p.horizon_days)] ?? null : null}
+                    calibBins={p.assets ? confidenceCalibration[calibKey(p.assets.currency, p.horizon_days)] : undefined}
                   />
                 ))}
               </div>
@@ -323,6 +331,8 @@ export function OpenPredictionsSection({
             ...selected,
             current_price: livePrices[selected.assets?.ticker ?? '']?.price ?? selected.current_price,
           }}
+          bolsa={selected.assets ? scorecardBolsas[bolsaKey(selected.asset_id, selected.assets.currency, selected.horizon_days)] ?? null : null}
+          calibBins={selected.assets ? confidenceCalibration[calibKey(selected.assets.currency, selected.horizon_days)] : undefined}
           onClose={() => setSelected(null)}
         />
       )}
@@ -394,7 +404,7 @@ function PredictionConfidenceBlock({
   )
 }
 
-function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting, modelParam }: {
+function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting, modelParam, bolsa, calibBins }: {
   p: ConsensusPrediction
   livePrice: LivePrice | null
   onClick: () => void
@@ -403,7 +413,10 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
   onCancelDelete: () => void
   isConfirming: boolean
   isDeleting: boolean
+  bolsa?: ScorecardBolsa | null
+  calibBins?: CalibrationBin[]
 }) {
+  const calibratedConf = findCalibratedConfidence(p.confidence, calibBins)
   const asset = p.assets
   const predPct = p.final_pct_predicted
   const up = predPct >= 0
@@ -439,6 +452,7 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
         <div>
           <div style={{ fontFamily: MONO, fontSize: 19, fontWeight: 600, letterSpacing: '0.02em' }}>{asset?.ticker ?? '—'}</div>
           <div style={{ fontSize: 12, color: 'var(--text-hint)', marginTop: 2 }}>{asset?.name ?? ''}</div>
+          <div style={{ marginTop: 8 }}><SemaforoBadge bolsa={bolsa ?? null} compact /></div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 8, background: dirSoft, flexShrink: 0 }}>
@@ -478,10 +492,13 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
         {[
           {
             label: 'Confianza', value: `${confPct}%`, fill: confPct,
-            tip: 'Promedio ponderado de la certeza de cada modelo sobre su propia predicción. Se basa en la fuerza de señales como RSI extremo, ADX alto o squeeze de Bollinger. No dice si la predicción es correcta, sino cuán convencido está el modelo.',
+            sub: calibratedConf != null ? `calibrada: ${Math.round(calibratedConf * 100)}%` : 'sin calibrar todavía',
+            tip: calibratedConf != null
+              ? `Cruda: ${confPct}%. Calibrada contra el historial real de esta moneda+horizonte: ${(calibratedConf * 100).toFixed(0)}% — esto es lo que de verdad acertamos cuando el sistema reportó una confianza en este rango, no la certeza interna del modelo.`
+              : 'Promedio ponderado de la certeza de cada modelo sobre su propia predicción. Todavía no hay historial suficiente para calibrar este número contra la realidad — se muestra crudo.',
           },
           {
-            label: 'Acuerdo', value: `${agreePct}%`, fill: agreePct,
+            label: 'Acuerdo', value: `${agreePct}%`, fill: agreePct, sub: null,
             tip: 'Porcentaje de modelos que votan la misma dirección que la predicción final. 70% = 7 de 10 modelos coinciden. Puede haber mayoría alcista y aún así una predicción negativa, si los modelos bajistas tienen más confianza.',
           },
         ].map(m => (
@@ -495,6 +512,11 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
             <div style={{ height: 5, background: 'var(--bg-muted)', borderRadius: 999, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${m.fill}%`, background: 'var(--text-muted)', borderRadius: 999 }} />
             </div>
+            {m.sub && (
+              <div style={{ fontFamily: MONO, fontSize: 9, color: calibratedConf != null ? 'var(--text-muted)' : 'var(--text-hint)', marginTop: 3 }}>
+                {m.sub}
+              </div>
+            )}
           </div>
         ))}
       </div>

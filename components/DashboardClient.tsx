@@ -15,6 +15,7 @@ import { ModelosSection } from './ModelsSection'
 import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam, ClosedIntradayPred } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
+import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
 
 type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento' | 'modelos'
 
@@ -34,11 +35,14 @@ type Props = {
   backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
   xgbHistory: XgbHistoryEntry[]
+  scorecardBolsas: Record<string, ScorecardBolsa>
+  confidenceCalibration: Record<string, CalibrationBin[]>
 }
 
 export function DashboardClient({
   open, closed, closedIntraday, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
+  scorecardBolsas, confidenceCalibration,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -105,10 +109,10 @@ export function DashboardClient({
           <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
         </nav>
 
-        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} />}
-        {active === 'open'          && <OpenPredictionsSection predictions={open} dailyModelParams={dailyModelParams} />}
+        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} scorecardBolsas={scorecardBolsas} />}
+        {active === 'open'          && <OpenPredictionsSection predictions={open} dailyModelParams={dailyModelParams} scorecardBolsas={scorecardBolsas} confidenceCalibration={confidenceCalibration} />}
         {active === 'intraday'      && <IntradaySectionClient />}
-        {active === 'closed'        && <ClosedPredictionsSection results={closed} />}
+        {active === 'closed'        && <ClosedPredictionsSection results={closed} scorecardBolsas={scorecardBolsas} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
         {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} />}
         {active === 'news'          && <NewsSectionClient />}
