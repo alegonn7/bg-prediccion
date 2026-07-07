@@ -52,6 +52,20 @@ export type ClosedIntradayPred = {
   assets: { ticker: string; name: string } | null
 }
 
+export type CedearPair = {
+  cedearAssetId: string
+  cedearTicker: string
+  underlyingAssetId: string
+  underlyingTicker: string
+  ratio: number | null
+  cedearPriceArs: number | null
+  underlyingPriceUsd: number | null
+  impliedUsdPrice: number | null
+  gapPct: number | null
+}
+
+export type CclInfo = { venta: number; compra: number | null; fecha: string } | null
+
 export type DailyModelParam = {
   horizon_bucket: number
   lgbm_val_mae: number | null
@@ -86,6 +100,7 @@ async function getData() {
     { data: xgbHistoryRaw },
     { data: scorecardBolsasRaw },
     { data: confidenceCalibrationRaw },
+    { data: cclRaw },
   ] = await Promise.all([
     supabase
       .from('consensus_predictions')
@@ -123,7 +138,7 @@ async function getData() {
 
     supabase
       .from('assets')
-      .select('id, ticker, name, sector, asset_class, currency, is_active, horizon_days')
+      .select('id, ticker, name, sector, asset_class, currency, is_active, horizon_days, core_bucket, underlying_ticker, cedear_ratio')
       .eq('is_macro', false)
       .order('ticker'),
 
@@ -171,10 +186,30 @@ async function getData() {
     supabase
       .from('confidence_calibration')
       .select('currency, horizon_bucket, horizon_unit, bin_label, bin_lo, bin_hi, n, n_correct, calibrated_rate'),
+
+    // Etapa 6.1: histórico de CCL (ver dolar_ccl_history) — sólo necesitamos el más reciente
+    // para reconstruir el precio USD implícito de los CEDEARs (Etapa 6.3).
+    supabase
+      .from('dolar_ccl_history')
+      .select('fecha, compra, venta')
+      .order('fecha', { ascending: false })
+      .limit(1),
   ])
 
-  // Attach current prices to open predictions
-  const assetIds = [...new Set((open ?? []).map((p: any) => p.asset_id))]
+  // Etapa 6.2/6.3: pares CEDEAR (ars) <-> subyacente (usd) para la vista dual. underlying_ticker
+  // y cedear_ratio se cargaron en esta misma sesión (ver migración etapa6_add_cedear_underlyings_and_ratios).
+  const assetsByTicker: Record<string, any> = {}
+  for (const a of (allAssets ?? [])) assetsByTicker[a.ticker] = a
+  const cedearAssets = (allAssets ?? []).filter((a: any) => a.core_bucket === 'cedear_arg')
+  const cedearPairsBase = cedearAssets
+    .map((c: any) => ({ cedear: c, underlying: c.underlying_ticker ? assetsByTicker[c.underlying_ticker] : null }))
+    .filter((p: any) => p.underlying)
+
+  // Attach current prices to open predictions (+ a los pares CEDEAR/subyacente de arriba)
+  const assetIds = [...new Set([
+    ...(open ?? []).map((p: any) => p.asset_id),
+    ...cedearPairsBase.flatMap((p: any) => [p.cedear.id, p.underlying.id]),
+  ])]
   let priceMap: Record<string, number> = {}
   if (assetIds.length > 0) {
     const { data: prices } = await supabase
@@ -188,6 +223,31 @@ async function getData() {
       if (!priceMap[p.asset_id]) priceMap[p.asset_id] = Number(p.close)
     }
   }
+
+  const latestCcl = (cclRaw ?? [])[0] ?? null
+  const cedearPairs = cedearPairsBase.map((p: any) => {
+    const cedearPriceArs = priceMap[p.cedear.id] ?? null
+    const underlyingPriceUsd = priceMap[p.underlying.id] ?? null
+    const ratio = p.cedear.cedear_ratio != null ? Number(p.cedear.cedear_ratio) : null
+    const cclVenta = latestCcl?.venta != null ? Number(latestCcl.venta) : null
+    const impliedUsdPrice = (cedearPriceArs != null && ratio != null && cclVenta)
+      ? (cedearPriceArs * ratio) / cclVenta
+      : null
+    const gapPct = (impliedUsdPrice != null && underlyingPriceUsd)
+      ? ((impliedUsdPrice - underlyingPriceUsd) / underlyingPriceUsd) * 100
+      : null
+    return {
+      cedearAssetId: p.cedear.id,
+      cedearTicker: p.cedear.ticker as string,
+      underlyingAssetId: p.underlying.id,
+      underlyingTicker: p.underlying.ticker as string,
+      ratio,
+      cedearPriceArs,
+      underlyingPriceUsd,
+      impliedUsdPrice,
+      gapPct,
+    }
+  })
 
   const openWithPrices = (open ?? []).map((p: any) => ({
     ...p,
@@ -266,6 +326,8 @@ async function getData() {
     backtestModelStats,
     changelog: (changelogRaw ?? []) as ChangelogEntry[],
     xgbHistory: (xgbHistoryRaw ?? []) as XgbHistoryEntry[],
+    cedearPairs,
+    ccl: latestCcl ? { venta: Number(latestCcl.venta), compra: latestCcl.compra != null ? Number(latestCcl.compra) : null, fecha: latestCcl.fecha as string } : null,
   }
 }
 
@@ -277,7 +339,7 @@ export default async function Dashboard() {
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog, xgbHistory,
-    scorecardBolsas, confidenceCalibration,
+    scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
   } = await getData()
   return (
     <DashboardClient
@@ -298,6 +360,8 @@ export default async function Dashboard() {
       xgbHistory={xgbHistory}
       scorecardBolsas={scorecardBolsas}
       confidenceCalibration={confidenceCalibration}
+      cedearPairs={cedearPairs}
+      ccl={ccl}
     />
   )
 }

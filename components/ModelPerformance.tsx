@@ -6,23 +6,14 @@ const MONO     = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const HORIZONS = [1, 7, 14, 30, 60, 90]
 const MIN_SAMPLES = 5
 
+// D4: roster consolidado a 4 votos reales (ver ModelsSection.tsx) — reemplaza los 16/13
+// nombres anteriores. Nombres viejos que sigan cerrando desde antes del cambio se muestran
+// igual gracias al fallback `MODEL_LABELS[name] ?? name` más abajo.
 const MODEL_LABELS: Record<string, string> = {
-  tendencia:       'Tendencia',
-  momentum:        'Momentum',
-  volatilidad:     'Volatilidad',
-  volumen:         'Volumen',
-  estructura:      'Estructura',
-  elliott:         'Elliott',
-  velas:           'Velas',
-  macro:           'Macro',
-  fundamental:     'Fundamental',
-  sentimiento:     'Sentimiento',
-  regresion:       'Regresión',
-  reversion:       'Reversión',
-  divergencias:    'Divergencias',
-  estacionalidad:  'Estacionalidad',
-  beta_mercado:    'Beta mercado',
-  fuerza_relativa: 'Fuerza relativa',
+  lgbm:        'LightGBM',
+  ridge:       'Ridge lineal',
+  sentimiento: 'Sentimiento LLM',
+  reversion:   'Reversión a la media',
 }
 const MODEL_ORDER = Object.keys(MODEL_LABELS)
 

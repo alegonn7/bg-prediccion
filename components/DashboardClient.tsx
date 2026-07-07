@@ -9,10 +9,11 @@ import { SettingsSection } from './Settings'
 import { ModelAnalysisSection } from './ModelAnalysis'
 import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
+import { CedearDualSection } from './CedearDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam, ClosedIntradayPred } from '@/app/page'
+import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam, ClosedIntradayPred, CedearPair, CclInfo } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
@@ -37,12 +38,14 @@ type Props = {
   xgbHistory: XgbHistoryEntry[]
   scorecardBolsas: Record<string, ScorecardBolsa>
   confidenceCalibration: Record<string, CalibrationBin[]>
+  cedearPairs: CedearPair[]
+  ccl: CclInfo
 }
 
 export function DashboardClient({
   open, closed, closedIntraday, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
-  scorecardBolsas, confidenceCalibration,
+  scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -116,7 +119,12 @@ export function DashboardClient({
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
         {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} />}
         {active === 'news'          && <NewsSectionClient />}
-        {active === 'argentina'     && <ArgentinaSectionClient />}
+        {active === 'argentina'     && (
+          <>
+            <CedearDualSection pairs={cedearPairs} ccl={ccl} openPredictions={open} scorecardBolsas={scorecardBolsas} />
+            <ArgentinaSectionClient />
+          </>
+        )}
         {active === 'entrenamiento' && (
           <EntrenamientoSection
             runs={backtestRuns}
