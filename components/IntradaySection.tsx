@@ -122,6 +122,17 @@ const th: React.CSSProperties = {
 const td = (extra: React.CSSProperties = {}): React.CSSProperties => ({ padding:'7px 10px', fontSize:12, whiteSpace:'nowrap', ...extra })
 const mono: React.CSSProperties = { fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }
 
+// D4: roster consolidado a 4 votos reales (ver ModelsSection.tsx) — reemplaza los 13 nombres
+// anteriores. Nombres viejos que sigan cerrando desde antes del cambio se muestran igual
+// gracias al fallback `MODEL_LABELS[name] ?? name` en cada uso.
+const MODEL_LABELS: Record<string, string> = {
+  lgbm:        'LightGBM',
+  ridge:       'Ridge lineal',
+  sentimiento: 'Sentimiento LLM',
+  reversion:   'Reversión a la media',
+}
+function modelLabel(name: string) { return MODEL_LABELS[name] ?? name }
+
 function StatCard({ label, value, sub, color }: { label: string; value: string|number; sub?: string; color?: string }) {
   return (
     <div style={card()}>
@@ -766,7 +777,7 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
                   return (
                     <tr key={model} style={{ borderBottom:'1px solid var(--border)' }}>
                       <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
-                      <td style={td({ fontWeight:600, ...mono })}>{model}</td>
+                      <td style={td({ fontWeight:600, ...mono })}>{modelLabel(model)}</td>
                       <td style={td({ textAlign:'center', color:'var(--text-muted)' })}>{d.n}</td>
                       <td style={td({ textAlign:'center', fontWeight:700, color: magMaeColor(maeA) })}>{maeA != null ? `${maeA.toFixed(2)}%` : '—'}</td>
                       <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
@@ -929,7 +940,7 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
             <tbody>
               {models.map(model => (
                 <tr key={model} style={{ borderBottom:'1px solid var(--border)' }}>
-                  <td style={td({ fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)", fontSize:11 })}>{model}</td>
+                  <td style={td({ fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)", fontSize:11 })}>{modelLabel(model)}</td>
                   {horizons.map(h => {
                     const p = grid.get(model)?.get(h)
                     const r2  = p?.signed_r2 ?? null
@@ -1338,7 +1349,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
                         return (
                           <div key={model} style={{ display:'flex', flexDirection:'column', gap:4 }}>
                             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                              <span style={{ fontSize:11, fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>{model}</span>
+                              <span style={{ fontSize:11, fontWeight:600, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" }}>{modelLabel(model)}</span>
                               <span style={{ fontSize:10, color:'var(--text-hint)' }}>{obs?.total ?? 0} predicciones</span>
                             </div>
                             <div style={{ display:'flex', gap:8, alignItems:'center' }}>
@@ -1440,7 +1451,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
                           return (
                             <tr key={w.model_name} style={{ borderBottom:'1px solid var(--border)' }}>
                               <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
-                              <td style={td({ fontWeight:700, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>{w.model_name}</td>
+                              <td style={td({ fontWeight:700, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>{modelLabel(w.model_name)}</td>
                               <td style={td({ textAlign:'center', fontWeight:700, color: maeColor, fontFamily:"var(--font-mono,'IBM Plex Mono',monospace)" })}>
                                 {mae != null ? `${mae.toFixed(3)}%` : '—'}
                               </td>

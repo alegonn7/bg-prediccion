@@ -87,7 +87,7 @@ export function DashboardClient({
               ¿Puede la IA predecir el mercado?
             </h1>
             <p style={{ fontSize: 15, lineHeight: 1.6, color: 'var(--text-muted)', margin: 0 }}>
-              Diez modelos independientes votan cada día. Las predicciones se congelan al emitirse y se auditan contra la realidad, sin retoques.
+              4 votos genuinamente distintos (LGBM, Ridge, sentimiento, reversión) se combinan cada día. Las predicciones se congelan al emitirse y se auditan contra la realidad, sin retoques.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

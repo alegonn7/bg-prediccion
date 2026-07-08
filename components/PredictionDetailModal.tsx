@@ -49,6 +49,13 @@ type ConsensusPrediction = {
 }
 
 const MODEL_LABELS: Record<string, string> = {
+  // D4: roster consolidado a 4 votos reales — lgbm/ridge/sentimiento/reversion.
+  lgbm: 'LightGBM',
+  ridge: 'Ridge lineal',
+  sentimiento: 'Sentimiento LLM',
+  reversion: 'Reversión a la media',
+  // Nombres viejos (16 estrategias, previos a la Etapa 4) — se mantienen para predicciones
+  // ya emitidas que todavía no cerraron y siguen mostrándose con estos nombres.
   tendencia: 'Tendencia',
   momentum: 'Momentum',
   volatilidad: 'Volatilidad',
@@ -58,7 +65,6 @@ const MODEL_LABELS: Record<string, string> = {
   velas: 'Velas',
   macro: 'Macro',
   fundamental: 'Fundamental',
-  sentimiento: 'Sentimiento',
 }
 
 function fmt(n: number, d = 2) { return (n >= 0 ? '+' : '') + n.toFixed(d) + '%' }
