@@ -113,7 +113,7 @@ export function DashboardClient({
 
         {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} scorecardBolsas={scorecardBolsas} />}
         {active === 'open'          && <OpenPredictionsSection predictions={open} dailyModelParams={dailyModelParams} scorecardBolsas={scorecardBolsas} confidenceCalibration={confidenceCalibration} />}
-        {active === 'intraday'      && <IntradaySectionClient />}
+        {active === 'intraday'      && <IntradaySectionClient scorecardBolsas={scorecardBolsas} />}
         {active === 'closed'        && <ClosedPredictionsSection results={closed} scorecardBolsas={scorecardBolsas} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
         {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} />}

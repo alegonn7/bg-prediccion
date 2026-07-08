@@ -1,6 +1,8 @@
 'use client'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
+import { SemaforoBadge } from './Semaforo'
+import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const ANON_KEY     = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -28,7 +30,7 @@ interface IntraConsensus {
   models_bullish: number; models_bearish: number; models_neutral: number; models_total: number
   status: string; actual_pct: number | null; direction_correct: boolean | null
   closed_at: string | null; created_at: string
-  assets: { ticker: string; name: string } | null
+  assets: { ticker: string; name: string; currency: string } | null
 }
 
 interface ModelPred {
@@ -239,11 +241,11 @@ function FiltersBar({ filters, onChange }: { filters: Filters; onChange: (f: Fil
 }
 
 // ── Predictions table ──────────────────────────────────────────────────────────
-function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?: boolean }) {
+function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraConsensus[]; showStatus?: boolean; scorecardBolsas?: Record<string, ScorecardBolsa> }) {
   const hasClosed = preds.some(p => p.actual_pct != null)
   const showPrices = !showStatus
   const headers = [
-    'Ticker', 'Dirección', 'Horizonte',
+    'Ticker', 'Semáforo', 'Dirección', 'Horizonte',
     showPrices ? 'Precio actual' : null,
     showPrices ? 'Target' : null,
     'Pred %', 'Real %',
@@ -256,8 +258,8 @@ function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?
       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
         <thead>
           <tr>
-            {headers.map((h, i) => (
-              <th key={h} style={{ ...th, textAlign: i >= 2 ? 'center' : 'left', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>{h}</th>
+            {headers.map(h => (
+              <th key={h} style={{ ...th, textAlign: (h === 'Ticker' || h === 'Semáforo' || h === 'Dirección') ? 'left' : 'center', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -271,9 +273,13 @@ function PredTable({ preds, showStatus }: { preds: IntraConsensus[]; showStatus?
               ? p.price_at_creation * (1 + p.final_pct_predicted / 100)
               : null
             const targetColor = p.final_pct_predicted >= 0 ? '#22c55e' : '#ef4444'
+            const bolsa = p.assets
+              ? scorecardBolsas[bolsaKey(p.asset_id, p.assets.currency, p.horizon_minutes, 'minutes')] ?? null
+              : null
             return (
               <tr key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
                 <td style={td({ fontWeight:700, ...mono })}>{p.assets?.ticker ?? '?'}</td>
+                <td style={td()}><SemaforoBadge bolsa={bolsa} compact /></td>
                 <td style={td()}><DirChip d={p.direction} correct={p.direction_correct} /></td>
                 <td style={td({ textAlign:'center' })}><span style={{ background:'var(--border)', borderRadius:4, padding:'1px 6px', fontSize:11, ...mono }}>{p.horizon_minutes}m</span></td>
                 {showPrices && (
@@ -1013,7 +1019,7 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
 }
 
 // ── Main section ───────────────────────────────────────────────────────────────
-export function IntradaySectionClient() {
+export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsas?: Record<string, ScorecardBolsa> }) {
   const [open, setOpen]           = useState<IntraConsensus[]>([])
   const [closed, setClosed]       = useState<IntraConsensus[]>([])
   const [modelPreds, setModelPreds] = useState<ModelPred[]>([])
@@ -1038,10 +1044,10 @@ export function IntradaySectionClient() {
   const loadLight = useCallback(async () => {
     const [{ data: openData }, { data: closedData }, { data: weightsData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
-        .select('*, assets(ticker, name)').eq('status','open')
+        .select('*, assets(ticker, name, currency)').eq('status','open')
         .order('created_at', { ascending: false }).limit(300),
       supabase.from('consensus_predictions_intraday')
-        .select('*, assets(ticker, name)').eq('status','closed')
+        .select('*, assets(ticker, name, currency)').eq('status','closed')
         .order('closed_at', { ascending: false }).limit(500),
       supabase.from('model_weights_intraday')
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
@@ -1564,7 +1570,7 @@ export function IntradaySectionClient() {
 
           {tab !== 'analysis' && paginated.length > 0 && (
             <div style={{ background:'var(--card)', border:'1px solid var(--border)', borderRadius:10, overflow:'hidden' }}>
-              <PredTable preds={paginated} showStatus={tab === 'closed'} />
+              <PredTable preds={paginated} showStatus={tab === 'closed'} scorecardBolsas={scorecardBolsas} />
             </div>
           )}
 
