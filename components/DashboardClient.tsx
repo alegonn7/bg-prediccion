@@ -13,7 +13,7 @@ import { CedearDualSection } from './CedearDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam, ClosedIntradayPred, CedearPair, CclInfo } from '@/app/page'
+import type { ChangelogEntry, DailyModelParam, ClosedIntradayPred, CedearPair, CclInfo } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
@@ -35,7 +35,6 @@ type Props = {
   modelLRParams: ModelLRParam[]
   backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
-  xgbHistory: XgbHistoryEntry[]
   scorecardBolsas: Record<string, ScorecardBolsa>
   confidenceCalibration: Record<string, CalibrationBin[]>
   cedearPairs: CedearPair[]
@@ -44,7 +43,7 @@ type Props = {
 
 export function DashboardClient({
   open, closed, closedIntraday, modelWeights, hits, total, assets, openPredsSummary,
-  dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog, xgbHistory,
+  dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog,
   scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
@@ -82,7 +81,7 @@ export function DashboardClient({
               fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase',
               color: 'var(--text-hint)', marginBottom: 14,
             }}>
-              Motor de Predicciones Auditadas · 16 modelos diarios + 13 intradiarios · Tiempo real
+              Motor de Predicciones Auditadas · Ensemble de 4 votos (LGBM, Ridge, sentimiento, reversión) · Tiempo real
             </div>
             <h1 style={{ fontSize: 30, lineHeight: 1.18, fontWeight: 600, letterSpacing: '-0.02em', margin: '0 0 12px' }}>
               ¿Puede la IA predecir el mercado?
@@ -132,7 +131,6 @@ export function DashboardClient({
             globalWeights={modelWeights}
             backtestModelStats={backtestModelStats}
             changelog={changelog}
-            xgbHistory={xgbHistory}
             dailyModelParams={dailyModelParams}
           />
         )}

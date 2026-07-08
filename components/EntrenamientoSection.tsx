@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import type { BacktestModelStat } from './ModelsSection'
-import type { ChangelogEntry, XgbHistoryEntry, DailyModelParam } from '@/app/page'
+import type { ChangelogEntry, DailyModelParam } from '@/app/page'
 
 export type BacktestRun = {
   ticker: string
@@ -28,11 +28,9 @@ type Props = {
   globalWeights: { model_name: string; weight: number; direction_accuracy: number | null; sample_size: number }[]
   backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
-  xgbHistory: XgbHistoryEntry[]
   dailyModelParams: DailyModelParam[]
 }
 
-const XGB_MODELS = ['tendencia','momentum','volatilidad','volumen','estructura','elliott','velas','macro','fundamental','sentimiento','regresion','reversion','divergencias','estacionalidad','beta_mercado','fuerza_relativa']
 const DAILY_BUCKETS = [1, 7, 14, 30, 60, 90]
 
 function maeColor(v: number) {
@@ -116,7 +114,7 @@ export function ErrorBadge({
 type JobState = 'idle' | 'running' | 'done' | 'error'
 
 export function EntrenamientoSection({
-  runs, horizonWeights, globalWeights, backtestModelStats, changelog, xgbHistory, dailyModelParams,
+  runs, horizonWeights, globalWeights, backtestModelStats, changelog, dailyModelParams,
 }: Props) {
   // Daily D2 state
   const [dailyState, setDailyState] = useState<JobState>('idle')
@@ -128,14 +126,6 @@ export function EntrenamientoSection({
   const [intraMsg,   setIntraMsg]   = useState('')
   const [intraJobId, setIntraJobId] = useState<string | null>(null)
 
-  // XGBoost state
-  const [xgbState,      setXgbState]      = useState<JobState>('idle')
-  const [xgbMsg,        setXgbMsg]        = useState('')
-  const [xgbJobId,      setXgbJobId]      = useState<string | null>(null)
-  const [predictState,  setPredictState]  = useState<JobState>('idle')
-  const [predictMsg,    setPredictMsg]    = useState('')
-  const [predictJobId,  setPredictJobId]  = useState<string | null>(null)
-
   // Advanced state
   const [lrState,      setLrState]      = useState<JobState>('idle')
   const [lrMsg,        setLrMsg]        = useState('')
@@ -144,13 +134,10 @@ export function EntrenamientoSection({
 
   // UI toggles
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [showXgbSingle, setShowXgbSingle] = useState(false)
   const [showActivos,  setShowActivos]  = useState(false)
   const [showHistory,  setShowHistory]  = useState(false)
-  const [xgbSingleRunning, setXgbSingleRunning] = useState<string | null>(null)
-  const [xgbSingleResult,  setXgbSingleResult]  = useState<string | null>(null)
 
-  const anyRunning = dailyState === 'running' || intraState === 'running' || xgbState === 'running' || predictState === 'running'
+  const anyRunning = dailyState === 'running' || intraState === 'running'
 
   // Poll daily D2
   useEffect(() => {
@@ -198,54 +185,6 @@ export function EntrenamientoSection({
     return () => clearInterval(iv)
   }, [intraJobId])
 
-  // Poll XGBoost train
-  useEffect(() => {
-    if (!xgbJobId) return
-    const iv = setInterval(async () => {
-      try {
-        const j = await fetch(`/api/xgb-train-status?jobId=${xgbJobId}`).then(r => r.json())
-        if (!j.ok) return
-        if (j.status === 'done') {
-          setXgbState('done')
-          setXgbMsg(`${j.models_done ?? 0} modelos entrenados`)
-          setXgbJobId(null)
-        } else if (j.status === 'error') {
-          setXgbState('error')
-          setXgbMsg(j.error ?? 'Error')
-          setXgbJobId(null)
-        } else {
-          const cur = j.current_model ? ` — ${j.current_model}` : ''
-          setXgbMsg(`${j.models_done ?? 0}/${j.models_total ?? 16}${cur}`)
-        }
-      } catch { /* ignore */ }
-    }, 3000)
-    return () => clearInterval(iv)
-  }, [xgbJobId])
-
-  // Poll XGBoost predict
-  useEffect(() => {
-    if (!predictJobId) return
-    const iv = setInterval(async () => {
-      try {
-        const j = await fetch(`/api/xgb-predict-status?jobId=${predictJobId}`).then(r => r.json())
-        if (!j.ok) return
-        if (j.status === 'done') {
-          const r = j.result ?? {}
-          setPredictState('done')
-          setPredictMsg(`${r.predictions ?? 0} predicciones · ${r.assets ?? 0} activos · ${r.date ?? ''}`)
-          setPredictJobId(null)
-        } else if (j.status === 'error') {
-          setPredictState('error')
-          setPredictMsg(j.error ?? 'Error')
-          setPredictJobId(null)
-        } else {
-          setPredictMsg(`${j.models_done ?? 0}/${j.models_total ?? '?'} modelos…`)
-        }
-      } catch { /* ignore */ }
-    }, 3000)
-    return () => clearInterval(iv)
-  }, [predictJobId])
-
   async function trainDaily() {
     setDailyState('running'); setDailyMsg('')
     try {
@@ -264,24 +203,6 @@ export function EntrenamientoSection({
     } catch { setIntraState('error'); setIntraMsg('Error de conexión') }
   }
 
-  async function trainXgb() {
-    setXgbState('running'); setXgbMsg('')
-    try {
-      const j = await fetch('/api/xgb-train-all', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then(r => r.json())
-      if (j.ok && j.job_id) { setXgbJobId(j.job_id) }
-      else { setXgbState('error'); setXgbMsg(j.error ?? 'Error') }
-    } catch { setXgbState('error'); setXgbMsg('Error de conexión') }
-  }
-
-  async function generatePredictions() {
-    setPredictState('running'); setPredictMsg('')
-    try {
-      const j = await fetch('/api/xgb-predict', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then(r => r.json())
-      if (j.ok && j.job_id) { setPredictJobId(j.job_id) }
-      else { setPredictState('error'); setPredictMsg(j.error ?? 'Error') }
-    } catch { setPredictState('error'); setPredictMsg('Error de conexión') }
-  }
-
   async function runLR() {
     setLrState('running'); setLrMsg('')
     try {
@@ -297,18 +218,6 @@ export function EntrenamientoSection({
       if (j.ok) { setFederState('done'); setFederMsg(`${j.model_lr_upserted ?? 0} modelos LR · ${j.weights_upserted ?? 0} pesos`) }
       else { setFederState('error'); setFederMsg(j.error ?? 'Error') }
     } catch { setFederState('error'); setFederMsg('Error de conexión') }
-  }
-
-  async function handleXGBSingle(mn: string) {
-    setXgbSingleRunning(mn); setXgbSingleResult(null)
-    try {
-      const j = await fetch('/api/xgb-train', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_name: mn }) }).then(r => r.json())
-      if (j.ok) {
-        const accs = Object.entries(j.buckets ?? {}).filter(([, v]: any) => !v.skipped).map(([b, v]: any) => `${b}d:${(v.accuracy * 100).toFixed(0)}%`).join(' · ')
-        setXgbSingleResult(`${mn}: ${accs || 'entrenado'}`)
-      } else { setXgbSingleResult(`Error: ${j.error}`) }
-    } catch { setXgbSingleResult('Error de conexión') }
-    finally { setXgbSingleRunning(null) }
   }
 
   function btnStyle(state: JobState, disabled: boolean): React.CSSProperties {
@@ -332,17 +241,12 @@ export function EntrenamientoSection({
   const total = runs.length
   const recentChanges = changelog.filter(c => c.trigger !== 'initial').slice(0, 40)
 
-  // Last XGB trained
-  const lastXgb = xgbHistory.length > 0
-    ? [...xgbHistory].sort((a, b) => b.trained_at.localeCompare(a.trained_at))[0]
-    : null
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: '0 0 4px' }}>Entrenamiento</h2>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-          Modelo diario D2 · 40 features · cluster models · intradiario · XGBoost
+          Modelo diario D2 · 40 features · cluster models · intradiario
         </p>
       </div>
 
@@ -453,73 +357,6 @@ export function EntrenamientoSection({
           <button onClick={trainIntra} disabled={anyRunning} style={btnStyle(intraState, anyRunning)}>
             {btnLabel(intraState, 'Entrenar')}
           </button>
-        </div>
-      </Card>
-
-      {/* ── 3. XGBoost + Scores ── */}
-      <Card>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginBottom: xgbMsg || predictMsg ? 10 : 0 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>XGBoost — Scores fundamentales</div>
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--text-hint)', margin: 0, lineHeight: 1.5 }}>
-              16 modelos (tendencia, momentum, macro…) → generan features score_* usados por el modelo D2.
-              {lastXgb && <> Último entrenamiento: <span style={{ fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)" }}>{relTime(lastXgb.trained_at)}</span>.</>}
-            </p>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-            <button onClick={trainXgb} disabled={anyRunning} style={{ ...btnStyle(xgbState, anyRunning), whiteSpace: 'nowrap' }}>
-              {btnLabel(xgbState, 'Entrenar modelos')}
-            </button>
-            <button onClick={generatePredictions} disabled={anyRunning} style={{ ...btnStyle(predictState, anyRunning), whiteSpace: 'nowrap' }}>
-              {btnLabel(predictState, 'Predicciones hoy')}
-            </button>
-          </div>
-        </div>
-        {(xgbMsg || predictMsg) && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {xgbMsg && (
-              <div style={{ fontSize: 11, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: xgbState === 'error' ? '#ef4444' : xgbState === 'done' ? '#22c55e' : '#f59e0b', background: 'var(--bg)', borderRadius: 5, padding: '5px 10px', display: 'inline-block' }}>
-                XGBoost: {xgbMsg}
-              </div>
-            )}
-            {predictMsg && (
-              <div style={{ fontSize: 11, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", color: predictState === 'error' ? '#ef4444' : predictState === 'done' ? '#22c55e' : '#f59e0b', background: 'var(--bg)', borderRadius: 5, padding: '5px 10px', display: 'inline-block' }}>
-                Predicciones: {predictMsg}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* XGBoost per-model training */}
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-          <button onClick={() => setShowXgbSingle(s => !s)} style={{ fontSize: 11, color: 'var(--text-hint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            {showXgbSingle ? '▲ Ocultar' : '▼ Reentrenar modelo individual'}
-          </button>
-          {showXgbSingle && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: xgbSingleResult ? 8 : 0 }}>
-                {XGB_MODELS.map(mn => (
-                  <button key={mn} onClick={() => handleXGBSingle(mn)} disabled={xgbSingleRunning !== null || anyRunning} style={{
-                    padding: '3px 9px', fontSize: 10,
-                    background: xgbSingleRunning === mn ? '#7c3aed' : 'var(--bg)',
-                    color: xgbSingleRunning === mn ? '#fff' : 'var(--text-hint)',
-                    border: `1px solid ${xgbSingleRunning === mn ? '#7c3aed' : 'var(--border)'}`,
-                    borderRadius: 5, cursor: xgbSingleRunning !== null ? 'default' : 'pointer',
-                    fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)",
-                  }}>
-                    {mn}
-                  </button>
-                ))}
-              </div>
-              {xgbSingleResult && (
-                <div style={{ fontSize: 11, marginTop: 6, color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", background: 'var(--bg)', borderRadius: 5, padding: '6px 10px' }}>
-                  {xgbSingleResult}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </Card>
 

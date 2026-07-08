@@ -6,17 +6,6 @@ import { bolsaKey, calibKey, type ScorecardBolsa, type CalibrationBin } from '@/
 
 export type { ModelLRParam, BacktestModelStat }
 
-export type XgbHistoryEntry = {
-  id: string
-  model_name: string
-  horizon_bucket: number
-  old_accuracy: number | null
-  new_accuracy: number
-  old_samples: number | null
-  new_samples: number
-  trained_at: string
-}
-
 export type ChangelogEntry = {
   id: number
   snapshot_at: string
@@ -97,7 +86,6 @@ async function getData() {
     { data: modelLRParamsRaw },
     { data: backtestStatsRaw },
     { data: changelogRaw },
-    { data: xgbHistoryRaw },
     { data: scorecardBolsasRaw },
     { data: confidenceCalibrationRaw },
     { data: cclRaw },
@@ -172,12 +160,6 @@ async function getData() {
       .select('id, snapshot_at, model_name, horizon_bucket, change_type, trigger, old_samples, new_samples, old_accuracy, new_accuracy, old_weight, new_weight, old_dir_accuracy, new_dir_accuracy, max_coeff_delta, top_changed_feature, feature_names, summary')
       .order('snapshot_at', { ascending: false })
       .limit(200),
-
-    supabase
-      .from('xgb_training_history')
-      .select('id, model_name, horizon_bucket, old_accuracy, new_accuracy, old_samples, new_samples, trained_at')
-      .order('trained_at', { ascending: false })
-      .limit(300),
 
     supabase
       .from('scorecard_bolsas')
@@ -325,7 +307,6 @@ async function getData() {
     modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
     backtestModelStats,
     changelog: (changelogRaw ?? []) as ChangelogEntry[],
-    xgbHistory: (xgbHistoryRaw ?? []) as XgbHistoryEntry[],
     cedearPairs,
     ccl: latestCcl ? { venta: Number(latestCcl.venta), compra: latestCcl.compra != null ? Number(latestCcl.compra) : null, fecha: latestCcl.fecha as string } : null,
   }
@@ -338,7 +319,7 @@ export default async function Dashboard() {
     open, closed, closedIntraday, modelWeights, hits, total, assets,
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
-    modelLRParams, backtestModelStats, changelog, xgbHistory,
+    modelLRParams, backtestModelStats, changelog,
     scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
   } = await getData()
   return (
@@ -357,7 +338,6 @@ export default async function Dashboard() {
       modelLRParams={modelLRParams}
       backtestModelStats={backtestModelStats}
       changelog={changelog}
-      xgbHistory={xgbHistory}
       scorecardBolsas={scorecardBolsas}
       confidenceCalibration={confidenceCalibration}
       cedearPairs={cedearPairs}

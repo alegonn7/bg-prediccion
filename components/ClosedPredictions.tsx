@@ -170,7 +170,7 @@ export function ClosedPredictionsSection({ results, scorecardBolsas = {} }: { re
           />
 
           <p style={{ fontSize: 12, lineHeight: 1.6, color: 'var(--text-hint)', margin: '16px 4px 0', fontFamily: MONO }}>
-            Cada fila es un consenso de 16 modelos. La predicción se congela al emitirse y no puede modificarse.
+            Cada fila es un consenso de hasta 4 votos (LGBM, Ridge, sentimiento, reversión). La predicción se congela al emitirse y no puede modificarse.
           </p>
         </>
       )}

@@ -468,7 +468,7 @@ export function ScorecardSection({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <TypeCard
           typeLabel="Predicciones diarias"
-          horizonNote="Horizonte de 1 a 90 días · modelo LGBM + Ridge · 16 modelos diarios"
+          horizonNote="Horizonte de 1 a 90 días · ensemble de 4 votos (LGBM, Ridge, sentimiento, reversión)"
           g={daily}
           dirTarget={65}
           maeTarget={2.0}
@@ -478,7 +478,7 @@ export function ScorecardSection({
         />
         <TypeCard
           typeLabel="Predicciones intradiarias"
-          horizonNote="Dentro del mismo día de mercado · 13 modelos intradiarios"
+          horizonNote="Dentro del mismo día de mercado · ensemble de 4 votos (LGBM, Ridge, sentimiento, reversión)"
           g={intraday}
           dirTarget={60}
           maeTarget={0.5}

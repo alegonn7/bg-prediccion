@@ -373,7 +373,7 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
                 ))}
               </div>
               <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-hint)' }}>
-                Mayor acuerdo entre los 16 modelos → mayor probabilidad de acertar
+                Mayor acuerdo entre los 4 votos → mayor probabilidad de acertar
               </div>
             </Card>
           </div>
