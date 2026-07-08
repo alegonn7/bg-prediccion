@@ -1381,8 +1381,8 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
                 <div style={{ fontSize:13, fontWeight:600, marginBottom:8 }}>Aprendizaje automático de pesos intraday</div>
                 <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7, marginBottom:12 }}>
                   Cada vez que <b>juez-intraday</b> evalúa predicciones vencidas (cada 5 min en horario de mercado),
-                  recalcula los pesos de los 13 modelos basándose en las últimas 500 predicciones cerradas.
-                  Los modelos más precisos reciben mayor peso en el consenso.
+                  recalcula los pesos del ensemble de 4 votos (LGBM, Ridge, sentimiento, reversión) basándose en las
+                  últimas 500 predicciones cerradas. Los votos más precisos reciben mayor peso en el consenso.
                   <br /><span style={{ color:'var(--text-hint)' }}>
                     Fórmula: peso = max(0.1, min(3.0, 1.0 + (accuracy − 0.5) × 4))
                   </span>
@@ -1579,7 +1579,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
       )}
 
       <p style={{ fontSize:11, color:'var(--text-hint)', lineHeight:1.5 }}>
-        13 modelos · horizontes 60, 120 y 240 min · auditoría automática al vencimiento
+        Ensemble de 4 votos (LGBM, Ridge, sentimiento, reversión) · horizontes 60, 120 y 240 min · auditoría automática al vencimiento
       </p>
     </div>
   )
