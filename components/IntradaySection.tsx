@@ -36,6 +36,7 @@ interface IntraConsensus {
 interface ModelPred {
   model_name: string; direction: string; direction_correct: boolean | null
   confidence: number; horizon_minutes: number; mae: number | null; created_at: string
+  final_pct_predicted: number | null; price_at_creation: number | null; actual_price: number | null
   assets: { ticker: string } | null
 }
 
@@ -476,15 +477,20 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
       .slice(-14)
 
     // Model ranking
-    const byModel: Record<string, { n: number; c: number; up_n: number; up_c: number; down_n: number; down_c: number; maes: number[] }> = {}
+    const byModel: Record<string, { n: number; c: number; up_n: number; up_c: number; down_n: number; down_c: number; maes: number[]; predMags: number[]; actualMags: number[] }> = {}
     for (const p of modelPreds) {
       if (p.direction_correct == null) continue
-      if (!byModel[p.model_name]) byModel[p.model_name] = { n: 0, c: 0, up_n: 0, up_c: 0, down_n: 0, down_c: 0, maes: [] }
+      if (!byModel[p.model_name]) byModel[p.model_name] = { n: 0, c: 0, up_n: 0, up_c: 0, down_n: 0, down_c: 0, maes: [], predMags: [], actualMags: [] }
       const m = byModel[p.model_name]
       m.n++; if (p.direction_correct) m.c++
       if (p.direction === 'up') { m.up_n++; if (p.direction_correct) m.up_c++ }
       else if (p.direction === 'down') { m.down_n++; if (p.direction_correct) m.down_c++ }
       if (p.mae != null) m.maes.push(Number(p.mae))
+      if (p.final_pct_predicted != null) m.predMags.push(Math.abs(Number(p.final_pct_predicted)))
+      if (p.actual_price != null && p.price_at_creation != null && p.price_at_creation !== 0) {
+        const actualPct = (Number(p.actual_price) / Number(p.price_at_creation) - 1) * 100
+        m.actualMags.push(Math.abs(actualPct))
+      }
     }
 
     return { total, correct, accuracy, mae, byHorizon, byDir, byAgree, confBuckets, bySession, byTicker, dailyTrend, byModel, avgPredMag, avgActualMag, magBias, magMae, magWithin03, magWithin05 }
@@ -772,17 +778,21 @@ function IntradayAnalysis({ closedPreds, modelPreds }: AnalysisProps) {
               </thead>
               <tbody>
                 {sortedModels.map(([model, d], i) => {
-                  const a     = pct(d.c, d.n)
-                  const maeA  = avg(d.maes)
+                  const a        = pct(d.c, d.n)
+                  const maeA     = avg(d.maes)
+                  const predMag  = avg(d.predMags)
+                  const actMag   = avg(d.actualMags)
+                  const sesgo    = predMag != null && actMag != null ? predMag - actMag : null
+                  const sesgoCol = sesgo == null ? 'var(--text-hint)' : Math.abs(sesgo) <= 0.1 ? '#22c55e' : Math.abs(sesgo) <= 0.3 ? '#f59e0b' : '#ef4444'
                   return (
                     <tr key={model} style={{ borderBottom:'1px solid var(--border)' }}>
                       <td style={td({ color:'var(--text-hint)', fontWeight:600 })}>{i + 1}</td>
                       <td style={td({ fontWeight:600, ...mono })}>{modelLabel(model)}</td>
                       <td style={td({ textAlign:'center', color:'var(--text-muted)' })}>{d.n}</td>
                       <td style={td({ textAlign:'center', fontWeight:700, color: magMaeColor(maeA) })}>{maeA != null ? `${maeA.toFixed(2)}%` : '—'}</td>
-                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
-                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
-                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>—</td>
+                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>{predMag != null ? `${predMag.toFixed(2)}%` : '—'}</td>
+                      <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>{actMag != null ? `${actMag.toFixed(2)}%` : '—'}</td>
+                      <td style={td({ textAlign:'center', ...mono, fontWeight:600, color: sesgoCol })}>{sesgo != null ? `${sesgo > 0 ? '+' : ''}${sesgo.toFixed(2)}%` : '—'}</td>
                       <td style={td({ textAlign:'center', color: accColor(a) })}>{fmt(a)}</td>
                     </tr>
                   )
@@ -1074,7 +1084,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
   const loadHeavy = useCallback(async () => {
     const [{ data: mpData }, { data: lrData }, { data: sessData }] = await Promise.all([
       supabase.from('model_predictions_intraday')
-        .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, assets!asset_id(ticker)')
+        .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, final_pct_predicted, price_at_creation, actual_price, assets!asset_id(ticker)')
         .eq('status','closed').not('direction_correct','is',null).limit(1000),
       supabase.from('model_learned_params_intraday')
         .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated, signed_r2, avg_actual_mag')
