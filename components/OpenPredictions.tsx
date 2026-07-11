@@ -154,8 +154,11 @@ export function OpenPredictionsSection({
 
   useEffect(() => {
     fetchLivePrices()
-    const id = setInterval(fetchLivePrices, LIVE_POLL_MS)
-    return () => clearInterval(id)
+    // Skip ticks while the tab is backgrounded — same waste pattern found in IntradaySection.tsx.
+    const id = setInterval(() => { if (document.visibilityState === 'visible') fetchLivePrices() }, LIVE_POLL_MS)
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchLivePrices() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [fetchLivePrices])
 
   async function handleDelete(id: string) {
