@@ -1065,17 +1065,17 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
   const loadLight = useCallback(async () => {
     const [{ data: openData }, { data: closedData }, { data: weightsData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
-        .select('*, assets(ticker, name, currency)').eq('status','open')
+        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, assets(ticker, name, currency)').eq('status','open')
         .order('created_at', { ascending: false }).limit(300),
       supabase.from('consensus_predictions_intraday')
-        .select('*, assets(ticker, name, currency)').eq('status','closed')
+        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, assets(ticker, name, currency)').eq('status','closed')
         .order('closed_at', { ascending: false }).limit(500),
       supabase.from('model_weights_intraday')
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')
         .order('direction_accuracy', { ascending: false, nullsFirst: false }),
     ])
-    setOpen((openData ?? []) as IntraConsensus[])
-    setClosed((closedData ?? []) as IntraConsensus[])
+    setOpen((openData ?? []) as unknown as IntraConsensus[])
+    setClosed((closedData ?? []) as unknown as IntraConsensus[])
     setModelWeights((weightsData ?? []) as ModelWeightIntraday[])
     setLastRefresh(new Date()); setLoading(false)
   }, [])
@@ -1098,8 +1098,17 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
     setSessionStats((sessData ?? []) as SessionModelStat[])
   }, [])
 
-  // Poll light data every 2 minutes; lazy-load heavy data only when needed tabs are activated
-  useEffect(() => { loadLight(); const id = setInterval(loadLight, 120000); return () => clearInterval(id) }, [loadLight])
+  // Poll light data every 2 minutes, but only while the tab is visible and the market is open —
+  // this ran unconditionally 24/7 before and was the main driver of Egress overage on the free plan.
+  useEffect(() => {
+    loadLight()
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible' && isMarketOpen()) loadLight()
+    }, 120000)
+    const onVisible = () => { if (document.visibilityState === 'visible') loadLight() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
+  }, [loadLight])
   useEffect(() => { if (tab === 'analysis' || tab === 'modelos') loadHeavy() }, [tab, loadHeavy])
   useEffect(() => setPage(0), [filters, tab])
 
