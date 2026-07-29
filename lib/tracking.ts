@@ -30,31 +30,49 @@ export type TrackingTrade = {
   assets: { ticker: string; name: string } | null
 }
 
+export type TrackingCapitalMovement = {
+  id: string
+  portfolio_id: string
+  amount: number  // positivo = fondeo, negativo = retiro
+  created_at: string
+}
+
 export type CapitalCurvePoint = { date: string; capital: number }
 
 /**
- * Curva de capital = capital_inicial + P&L realizado acumulado (sólo trades cerrados,
- * en orden de cierre). Los trades `abierta` no mueven el capital todavía — ver nota de
- * diseño en REDISENO/STATUS.md, entrada de Etapa 20.
+ * Curva de capital = capital_inicial + P&L realizado acumulado (trades cerrados) + fondeos/retiros
+ * (Backlog post-21), cada uno aplicado en su fecha real — no al principio de la curva, para no
+ * fingir que un depósito de hoy estuvo invertido desde el día 1. Los trades `abierta` no mueven el
+ * capital todavía — ver nota de diseño en REDISENO/STATUS.md, entrada de Etapa 20.
+ *
+ * `retornoPct` usa capital total aportado (capital_inicial + fondeos - retiros) como base, no sólo
+ * `capital_inicial` — sin esto, fondear la cuenta infla el retorno artificialmente (más capital
+ * sin haber generado ese P&L). Es money-weighted, no time-weighted: no corrige por CUÁNDO entró
+ * cada peso, así que con movimientos frecuentes es una aproximación, no una métrica de performance
+ * exacta — aceptable para el alcance pedido (un tracker simple, no un sistema de atribución).
  */
-export function computeCapitalCurve(portfolio: TrackingPortfolio, trades: TrackingTrade[]) {
-  const closed = trades
-    .filter(t => t.status !== 'abierta' && t.closed_at != null && t.pnl_monto != null)
-    .sort((a, b) => new Date(a.closed_at!).getTime() - new Date(b.closed_at!).getTime())
+export function computeCapitalCurve(portfolio: TrackingPortfolio, trades: TrackingTrade[], movements: TrackingCapitalMovement[] = []) {
+  const events = [
+    ...trades
+      .filter(t => t.status !== 'abierta' && t.closed_at != null && t.pnl_monto != null)
+      .map(t => ({ date: t.closed_at!, amount: t.pnl_monto! })),
+    ...movements.map(m => ({ date: m.created_at, amount: m.amount })),
+  ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
   const curve: CapitalCurvePoint[] = [{ date: portfolio.created_at, capital: portfolio.capital_inicial }]
   let running = portfolio.capital_inicial
-  for (const t of closed) {
-    running += t.pnl_monto!
-    curve.push({ date: t.closed_at!, capital: running })
+  for (const e of events) {
+    running += e.amount
+    curve.push({ date: e.date, capital: running })
   }
 
   const capitalActual = running
-  const retornoPct = portfolio.capital_inicial > 0
-    ? ((capitalActual - portfolio.capital_inicial) / portfolio.capital_inicial) * 100
+  const totalAportado = portfolio.capital_inicial + movements.reduce((s, m) => s + m.amount, 0)
+  const retornoPct = totalAportado > 0
+    ? ((capitalActual - totalAportado) / totalAportado) * 100
     : 0
 
-  return { curve, capitalActual, retornoPct }
+  return { curve, capitalActual, retornoPct, totalAportado }
 }
 
 export function formatMoney(n: number, currency: Currency): string {

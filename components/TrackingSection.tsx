@@ -5,7 +5,7 @@ import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tool
 import { InfoTip } from './InfoTip'
 import {
   computeCapitalCurve, formatMoney, classifyCosto,
-  type Currency, type TrackingPortfolio, type TrackingTrade,
+  type Currency, type TrackingPortfolio, type TrackingTrade, type TrackingCapitalMovement,
 } from '@/lib/tracking'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
@@ -72,13 +72,15 @@ function CapitalCurveChart({ curve, currency }: { curve: { date: string; capital
 
 // ── Card de portfolio (por moneda) ──────────────────────────────────────
 function PortfolioCard({
-  currency, portfolio, trades, onCreated, onUpdated,
+  currency, portfolio, trades, movements, onCreated, onUpdated, onMovementAdded,
 }: {
   currency: Currency
   portfolio: TrackingPortfolio | null
   trades: TrackingTrade[]
+  movements: TrackingCapitalMovement[]
   onCreated: (p: TrackingPortfolio) => void
   onUpdated: (p: TrackingPortfolio) => void
+  onMovementAdded: (m: TrackingCapitalMovement) => void
 }) {
   const [capitalInput, setCapitalInput] = useState('')
   const [creating, setCreating] = useState(false)
@@ -128,6 +130,32 @@ function PortfolioCard({
     }
   }
 
+  // Backlog post-21 (a pedido explícito del usuario): fondear/retirar, separado de editar
+  // capital_inicial — ver comentario de computeCapitalCurve() en lib/tracking.ts para el porqué.
+  const [movType, setMovType] = useState<'deposito' | 'retiro'>('deposito')
+  const [movAmount, setMovAmount] = useState('')
+  const [savingMov, setSavingMov] = useState(false)
+  const [movError, setMovError] = useState<string | null>(null)
+
+  async function handleAddMovement() {
+    const amount = Number(movAmount)
+    if (!Number.isFinite(amount) || amount <= 0) { setMovError('Ingresá un monto válido (> 0)'); return }
+    if (!portfolio) return
+    setSavingMov(true); setMovError(null)
+    const res = await fetchJson('/api/tracking/movements', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portfolio_id: portfolio.id, type: movType, amount }),
+    })
+    setSavingMov(false)
+    if (res.ok) {
+      onMovementAdded(res.movement)
+      setMovAmount('')
+    } else {
+      setMovError(res.error ?? 'No se pudo registrar el movimiento')
+    }
+  }
+
   async function handleCreate() {
     const capital = Number(capitalInput)
     if (!Number.isFinite(capital) || capital <= 0) { setError('Ingresá un capital inicial válido'); return }
@@ -165,7 +193,8 @@ function PortfolioCard({
   }
 
   const portfolioTrades = trades.filter(t => t.portfolio_id === portfolio.id)
-  const { curve, capitalActual, retornoPct } = computeCapitalCurve(portfolio, portfolioTrades)
+  const portfolioMovements = movements.filter(m => m.portfolio_id === portfolio.id)
+  const { curve, capitalActual, retornoPct, totalAportado } = computeCapitalCurve(portfolio, portfolioTrades, portfolioMovements)
   const abiertas = portfolioTrades.filter(t => t.status === 'abierta').length
 
   return (
@@ -190,11 +219,57 @@ function PortfolioCard({
           <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Abiertas</div>
           <div style={{ fontFamily: MONO, fontSize: 15 }}>{abiertas}</div>
         </div>
+        {portfolioMovements.length > 0 && (
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Total aportado</div>
+            <div style={{ fontFamily: MONO, fontSize: 15 }}>{formatMoney(totalAportado, currency)}</div>
+          </div>
+        )}
       </div>
       <CapitalCurveChart curve={curve} currency={currency} />
       <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 8 }}>
-        Capital actual = capital inicial + P&amp;L realizado de operaciones ya cerradas. Las operaciones
-        abiertas no mueven este número hasta que cierren.
+        Capital actual = capital inicial + fondeos/retiros + P&amp;L realizado de operaciones ya
+        cerradas. Las operaciones abiertas no mueven este número hasta que cierren. Retorno % es
+        sobre el total aportado (capital inicial + fondeos − retiros), no sólo el capital inicial.
+      </div>
+
+      {/* Backlog post-21: fondear/retirar, separado de "editar capital inicial" de abajo — un
+          fondeo se suma en la fecha real en que se carga, no reescribe el punto de partida de la
+          curva (ver computeCapitalCurve() en lib/tracking.ts). */}
+      <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
+          Fondear / retirar
+          <InfoTip text="Registra un depósito o retiro de capital en la fecha de hoy — a diferencia de editar 'Capital inicial' de abajo, esto no reescribe el punto de partida de la curva: el monto se suma/resta a partir de ahora, así el retorno % de lo que ya operaste no se distorsiona." />
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setMovType('deposito')}
+              style={{ ...btn, padding: '6px 12px', background: movType === 'deposito' ? 'var(--up)' : 'var(--bg-muted)', color: movType === 'deposito' ? '#fff' : 'var(--text-muted)' }}>
+              + Fondear
+            </button>
+            <button onClick={() => setMovType('retiro')}
+              style={{ ...btn, padding: '6px 12px', background: movType === 'retiro' ? 'var(--down)' : 'var(--bg-muted)', color: movType === 'retiro' ? '#fff' : 'var(--text-muted)' }}>
+              − Retirar
+            </button>
+          </div>
+          <input type="number" placeholder="Monto" value={movAmount} onChange={e => setMovAmount(e.target.value)} style={{ ...inp, width: 110 }} />
+          <button style={{ ...btn, opacity: savingMov ? 0.6 : 1 }} disabled={savingMov} onClick={handleAddMovement}>
+            {savingMov ? 'Guardando...' : 'Confirmar'}
+          </button>
+        </div>
+        {movError && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 6 }}>{movError}</p>}
+        {portfolioMovements.length > 0 && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 100, overflowY: 'auto' }}>
+            {portfolioMovements.map(m => (
+              <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontFamily: MONO, color: 'var(--text-hint)' }}>
+                <span>{new Date(m.created_at).toLocaleDateString('es-AR')}</span>
+                <span style={{ color: m.amount >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                  {m.amount >= 0 ? '+' : ''}{formatMoney(m.amount, currency)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Etapa 21 (+ backlog): capital inicial y costo de ida y vuelta, editables cuando quiera —
@@ -556,16 +631,19 @@ function TradesList({ trades, portfolios }: { trades: TrackingTrade[]; portfolio
 export function TrackingSection() {
   const [portfolios, setPortfolios] = useState<TrackingPortfolio[]>([])
   const [trades, setTrades] = useState<TrackingTrade[]>([])
+  const [movements, setMovements] = useState<TrackingCapitalMovement[]>([])
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
     setLoading(true)
-    const [pRes, tRes] = await Promise.all([
+    const [pRes, tRes, mRes] = await Promise.all([
       fetchJson('/api/tracking/portfolios'),
       fetchJson('/api/tracking/trades'),
+      fetchJson('/api/tracking/movements'),
     ])
     if (pRes.ok) setPortfolios(pRes.portfolios)
     if (tRes.ok) setTrades(tRes.trades)
+    if (mRes.ok) setMovements(mRes.movements)
     setLoading(false)
   }, [])
 
@@ -582,8 +660,10 @@ export function TrackingSection() {
             currency={currency}
             portfolio={portfolios.find(p => p.currency === currency) ?? null}
             trades={trades}
+            movements={movements}
             onCreated={p => setPortfolios(prev => [...prev.filter(x => x.currency !== p.currency), p])}
             onUpdated={p => setPortfolios(prev => prev.map(x => x.currency === p.currency ? p : x))}
+            onMovementAdded={m => setMovements(prev => [m, ...prev])}
           />
         ))}
       </div>
