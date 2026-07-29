@@ -13,13 +13,14 @@ import { CedearDualSection } from './CedearDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
+import { TrackingSection } from './TrackingSection'
 import type { ChangelogEntry, DailyModelParam, CedearPair, CclInfo } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
 import type { IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
-type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento' | 'modelos'
+type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento' | 'modelos' | 'tracking'
 
 type Props = {
   open: any[]
@@ -111,6 +112,7 @@ export function DashboardClient({
           <button onClick={() => setActive('settings')}      style={tabStyle(active === 'settings')}>08 · Configurar</button>
           <button onClick={() => setActive('entrenamiento')} style={tabStyle(active === 'entrenamiento')}>09 · Entrenamiento</button>
           <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
+          <button onClick={() => setActive('tracking')}      style={tabStyle(active === 'tracking')}>11 · Operaciones</button>
         </nav>
 
         {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedTruncated={closedTruncated} intradayStats={intradayStats} scorecardBolsas={scorecardBolsas} />}
@@ -143,6 +145,7 @@ export function DashboardClient({
             dailyModelParams={dailyModelParams}
           />
         )}
+        {active === 'tracking' && <TrackingSection />}
 
       </div>
     </div>
