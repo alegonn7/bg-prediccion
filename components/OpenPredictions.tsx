@@ -44,6 +44,7 @@ type ConsensusPrediction = {
   price_path: any[] | null
   model_prediction_ids: string[] | null
   asset_id: string
+  stop_loss_pct: number | null
   assets: { ticker: string; name: string; asset_class: string; currency: string } | null
 }
 

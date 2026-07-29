@@ -97,6 +97,7 @@ async function getData() {
         price_at_creation, created_at, agreement_pct,
         models_bullish, models_bearish, models_neutral, models_total,
         final_pct_predicted, asset_id, price_path, model_prediction_ids,
+        stop_loss_pct,
         assets(ticker, name, asset_class, currency)
       `)
       .eq('status', 'open')

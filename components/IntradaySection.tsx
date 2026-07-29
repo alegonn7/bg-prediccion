@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { SemaforoBadge } from './Semaforo'
+import { InfoTip } from './InfoTip'
 import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -30,6 +31,7 @@ interface IntraConsensus {
   models_bullish: number; models_bearish: number; models_neutral: number; models_total: number
   status: string; actual_pct: number | null; direction_correct: boolean | null
   closed_at: string | null; created_at: string
+  stop_loss_pct: number | null
   assets: { ticker: string; name: string; currency: string } | null
 }
 
@@ -260,6 +262,7 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
     'Ticker', 'Semáforo', 'Dirección', 'Horizonte',
     showPrices ? 'Precio actual' : null,
     showPrices ? 'Target' : null,
+    showPrices ? 'Stop-loss' : null,
     'Pred %', 'Real %',
     hasClosed ? 'Δ Magnitud' : null,
     'Acuerdo',
@@ -271,7 +274,10 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
         <thead>
           <tr>
             {headers.map(h => (
-              <th key={h} style={{ ...th, textAlign: (h === 'Ticker' || h === 'Semáforo' || h === 'Dirección') ? 'left' : 'center', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>{h}</th>
+              <th key={h} style={{ ...th, textAlign: (h === 'Ticker' || h === 'Semáforo' || h === 'Dirección') ? 'left' : 'center', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>
+                {h}
+                {h === 'Stop-loss' && <InfoTip text="Percentil 10 empírico de movimiento adverso histórico para este horizonte y clase de activo (Etapa 18) — el 10% de las predicciones pasadas tuvieron un retorno peor que este en la dirección predicha. Sugerencia informativa a partir de datos históricos, no una orden automática." />}
+              </th>
             ))}
           </tr>
         </thead>
@@ -302,6 +308,13 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
                 {showPrices && (
                   <td style={td({ textAlign:'center', ...mono, fontWeight:700, color: targetColor })}>
                     {targetPrice != null ? `$${targetPrice.toFixed(2)}` : '—'}
+                  </td>
+                )}
+                {showPrices && (
+                  <td style={td({ textAlign:'center', ...mono, color:'var(--text-muted)' })}>
+                    {p.stop_loss_pct != null && p.price_at_creation != null
+                      ? `$${(p.price_at_creation * (1 + (p.direction === 'up' ? p.stop_loss_pct : -p.stop_loss_pct) / 100)).toFixed(2)}`
+                      : '—'}
                   </td>
                 )}
                 <td style={td({ textAlign:'center', ...mono })}>{p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted?.toFixed(2)}%</td>
@@ -1065,10 +1078,10 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
   const loadLight = useCallback(async () => {
     const [{ data: openData }, { data: closedData }, { data: weightsData }] = await Promise.all([
       supabase.from('consensus_predictions_intraday')
-        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, assets(ticker, name, currency)').eq('status','open')
+        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, stop_loss_pct, assets(ticker, name, currency)').eq('status','open')
         .order('created_at', { ascending: false }).limit(300),
       supabase.from('consensus_predictions_intraday')
-        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, assets(ticker, name, currency)').eq('status','closed')
+        .select('id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, stop_loss_pct, assets(ticker, name, currency)').eq('status','closed')
         .order('closed_at', { ascending: false }).limit(500),
       supabase.from('model_weights_intraday')
         .select('model_name, weight, direction_accuracy, sample_size, mae_avg, last_updated')

@@ -45,6 +45,7 @@ type ConsensusPrediction = {
   current_price: number | null
   price_path: PriceBand[] | null
   model_prediction_ids: string[] | null
+  stop_loss_pct: number | null
   assets: { ticker: string; name: string; asset_class: string; currency: string } | null
 }
 
@@ -303,6 +304,30 @@ function VoteVsPctExplanation({ bull, bear, predPct }: { bull: number; bear: num
   )
 }
 
+// ── Stop-loss sugerido (Etapa 18) ───────────────────────────────────────────
+function StopLossCard({ stopLossPct, priceAtCreation, direction }: { stopLossPct: number; priceAtCreation: number; direction: string }) {
+  // stopLossPct es el percentil p10 de retorno EN LA DIRECCIÓN PREDICHA (negativo = adverso).
+  // El movimiento de precio adverso va contra `direction`: si predijo "up", perder es que el
+  // precio caiga (mismo signo); si predijo "down", perder es que el precio suba (signo invertido).
+  const priceMovePct = direction === 'up' ? stopLossPct : -stopLossPct
+  const stopPrice = priceAtCreation * (1 + priceMovePct / 100)
+  return (
+    <div style={{ background: 'var(--bg-muted)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-hint)', marginBottom: 8 }}>
+        <span>Stop-loss sugerido</span>
+        <InfoTip text={`Percentil 10 empírico de movimiento adverso histórico para este horizonte y mercado (Etapa 18) — el 10% de las predicciones pasadas tuvieron un retorno peor que este en la dirección predicha. Es una referencia estadística, no una recomendación personalizada ni una orden automática: el sistema no opera solo, la decisión de entrar/salir es siempre tuya.`} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: 'var(--down)' }}>{fmt(stopLossPct)}</span>
+        <span style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-muted)' }}>≈ ${stopPrice.toFixed(2)}</span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-hint)', marginTop: 6, lineHeight: 1.5 }}>
+        Sugerencia informativa a partir de datos históricos — no es ejecución automática.
+      </div>
+    </div>
+  )
+}
+
 // ── Modal ──────────────────────────────────────────────────────────────────
 export function PredictionDetailModal({
   prediction,
@@ -427,6 +452,11 @@ export function PredictionDetailModal({
 
         {/* Semáforo de la bolsa (Etapa 3) */}
         <SemaforoDetail bolsa={bolsa ?? null} />
+
+        {/* Stop-loss sugerido (Etapa 18) */}
+        {p.stop_loss_pct != null && (
+          <StopLossCard stopLossPct={p.stop_loss_pct} priceAtCreation={p.price_at_creation} direction={p.direction} />
+        )}
 
         {/* Vote bar */}
         <div style={{ background: 'var(--bg-muted)', borderRadius: 12, padding: '14px 16px' }}>
