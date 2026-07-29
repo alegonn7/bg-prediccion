@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { InfoTip } from './InfoTip'
 import {
-  computeCapitalCurve, formatMoney,
+  computeCapitalCurve, formatMoney, classifyCosto,
   type Currency, type TrackingPortfolio, type TrackingTrade,
 } from '@/lib/tracking'
 
@@ -24,6 +24,8 @@ type OpenPrediction = {
   direction: string
   stop_loss_pct: number | null
   horizon_label: string
+  horizon_value: number
+  final_pct_predicted: number
   assets: { ticker: string; name: string; currency: Currency } | null
 }
 
@@ -70,16 +72,54 @@ function CapitalCurveChart({ curve, currency }: { curve: { date: string; capital
 
 // ── Card de portfolio (por moneda) ──────────────────────────────────────
 function PortfolioCard({
-  currency, portfolio, trades, onCreated,
+  currency, portfolio, trades, onCreated, onUpdated,
 }: {
   currency: Currency
   portfolio: TrackingPortfolio | null
   trades: TrackingTrade[]
   onCreated: (p: TrackingPortfolio) => void
+  onUpdated: (p: TrackingPortfolio) => void
 }) {
   const [capitalInput, setCapitalInput] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Etapa 21: costo de ida y vuelta configurable — el default (tabla Balanz) ya viene cargado
+  // en `portfolio` desde la creación (columnas con default en la migración), esto sólo permite
+  // editarlo después.
+  const [costoNormal, setCostoNormal] = useState('')
+  const [costoIntradia, setCostoIntradia] = useState('')
+  const [savingCosto, setSavingCosto] = useState(false)
+  const [costoError, setCostoError] = useState<string | null>(null)
+  const [costoSaved, setCostoSaved] = useState(false)
+
+  useEffect(() => {
+    if (!portfolio) return
+    setCostoNormal(String(portfolio.costo_ida_vuelta_pct))
+    setCostoIntradia(String(portfolio.costo_ida_vuelta_intradia_pct))
+  }, [portfolio?.costo_ida_vuelta_pct, portfolio?.costo_ida_vuelta_intradia_pct])
+
+  async function handleSaveCosto() {
+    const normal = Number(costoNormal)
+    const intradia = Number(costoIntradia)
+    if (!Number.isFinite(normal) || normal < 0 || !Number.isFinite(intradia) || intradia < 0) {
+      setCostoError('Ingresá porcentajes válidos (≥ 0)'); return
+    }
+    setSavingCosto(true); setCostoError(null); setCostoSaved(false)
+    const res = await fetchJson('/api/tracking/portfolios', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency, costo_ida_vuelta_pct: normal, costo_ida_vuelta_intradia_pct: intradia }),
+    })
+    setSavingCosto(false)
+    if (res.ok) {
+      onUpdated(res.portfolio)
+      setCostoSaved(true)
+      setTimeout(() => setCostoSaved(false), 2000)
+    } else {
+      setCostoError(res.error ?? 'No se pudo guardar')
+    }
+  }
 
   async function handleCreate() {
     const capital = Number(capitalInput)
@@ -149,6 +189,29 @@ function PortfolioCard({
         Capital actual = capital inicial + P&amp;L realizado de operaciones ya cerradas. Las operaciones
         abiertas no mueven este número hasta que cierren.
       </div>
+
+      {/* Etapa 21: costo de ida y vuelta configurable, usado por los badges ✓/✗ de "Predicciones
+          activas" e "Intradiario" y por el aviso al cargar una operación acá abajo. */}
+      <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
+          Costo de ida y vuelta (Balanz)
+          <InfoTip text="Comisión + IVA de comprar y vender, usado por el filtro de costo (badges ✓/✗ en Predicciones activas e Intradiario, y el aviso al cargar una operación acá abajo). Default calculado de la tabla de comisiones Balanz 2026 confirmada por vos: 0.50% online + IVA 21% = 0.605% por pata. 'Normal' (1.21% = 0.605%×2) aplica a predicciones diarias; 'Intradía' (0.605% = 0.3025%×2, con la bonificación del 50% de Balanz por mismo plazo/moneda/especie) aplica a predicciones intradiarias. No incluye derechos de mercado de BYMA (margen chico, no cuantificado)." />
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Normal %</div>
+            <input type="number" step="0.01" value={costoNormal} onChange={e => setCostoNormal(e.target.value)} style={{ ...inp, width: 90 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Intradía %</div>
+            <input type="number" step="0.01" value={costoIntradia} onChange={e => setCostoIntradia(e.target.value)} style={{ ...inp, width: 90 }} />
+          </div>
+          <button style={{ ...btn, opacity: savingCosto ? 0.6 : 1 }} disabled={savingCosto} onClick={handleSaveCosto}>
+            {savingCosto ? 'Guardando...' : costoSaved ? 'Guardado ✓' : 'Guardar'}
+          </button>
+        </div>
+        {costoError && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 6 }}>{costoError}</p>}
+      </div>
     </div>
   )
 }
@@ -175,24 +238,26 @@ function LoadTradeForm({
     if (src === 'daily') {
       const { data } = await supabase
         .from('consensus_predictions')
-        .select('id, asset_id, direction, horizon_days, stop_loss_pct, assets(ticker, name, currency)')
+        .select('id, asset_id, direction, horizon_days, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency)')
         .eq('status', 'open')
         .order('created_at', { ascending: false })
         .limit(500)
       setPredictions((data ?? []).map((p: any) => ({
         id: p.id, asset_id: p.asset_id, direction: p.direction, stop_loss_pct: p.stop_loss_pct,
-        horizon_label: `${p.horizon_days}d`, assets: p.assets,
+        horizon_label: `${p.horizon_days}d`, horizon_value: p.horizon_days,
+        final_pct_predicted: p.final_pct_predicted, assets: p.assets,
       })))
     } else {
       const { data } = await supabase
         .from('consensus_predictions_intraday')
-        .select('id, asset_id, direction, horizon_minutes, stop_loss_pct, assets(ticker, name, currency)')
+        .select('id, asset_id, direction, horizon_minutes, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency)')
         .eq('status', 'open')
         .order('created_at', { ascending: false })
         .limit(500)
       setPredictions((data ?? []).map((p: any) => ({
         id: p.id, asset_id: p.asset_id, direction: p.direction, stop_loss_pct: p.stop_loss_pct,
-        horizon_label: `${p.horizon_minutes}min`, assets: p.assets,
+        horizon_label: `${p.horizon_minutes}min`, horizon_value: p.horizon_minutes,
+        final_pct_predicted: p.final_pct_predicted, assets: p.assets,
       })))
     }
     setLoadingPreds(false)
@@ -205,6 +270,21 @@ function LoadTradeForm({
     if (!q) return predictions.slice(0, 30)
     return predictions.filter(p => p.assets?.ticker.toUpperCase().includes(q)).slice(0, 30)
   }, [predictions, search])
+
+  // Etapa 21: mismo filtro de costo que los badges de "Predicciones activas"/"Intradiario",
+  // acá como aviso no bloqueante al elegir qué operación cargar.
+  const selectedCosto = useMemo(() => {
+    if (!selected?.assets) return null
+    const portfolio = portfolios.find(p => p.currency === selected.assets!.currency)
+    return classifyCosto({
+      finalPctPredicted: selected.final_pct_predicted,
+      source,
+      horizonValue: selected.horizon_value,
+      costoConfig: portfolio
+        ? { normal: portfolio.costo_ida_vuelta_pct, intradia: portfolio.costo_ida_vuelta_intradia_pct }
+        : undefined,
+    })
+  }, [selected, source, portfolios])
 
   function pick(p: OpenPrediction) {
     setSelected(p)
@@ -305,6 +385,17 @@ function LoadTradeForm({
           <div style={{ fontSize: 12, marginBottom: 10 }}>
             Cargando <strong>{selected.assets?.ticker}</strong> ({selected.direction === 'up' ? 'sube' : 'baja'}, {selected.horizon_label})
           </div>
+          {selectedCosto && !selectedCosto.superaCosto && (
+            <div style={{
+              background: 'var(--down-soft)', border: '1px solid var(--down)33', borderRadius: 8,
+              padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--down)',
+            }}>
+              ⚠ El movimiento esperado ({selectedCosto.movimientoEsperadoPct.toFixed(2)}%) no supera el costo
+              de ida y vuelta configurado ({selectedCosto.costoPct.toFixed(2)}%){!selectedCosto.calibrado
+                ? ' — además, la magnitud de este horizonte todavía no está calibrada, puede estar mal escalada'
+                : ''}. No bloquea la carga, es sólo información — puede haber otras razones para operarla igual.
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Monto invertido</div>
@@ -413,6 +504,7 @@ export function TrackingSection() {
             portfolio={portfolios.find(p => p.currency === currency) ?? null}
             trades={trades}
             onCreated={p => setPortfolios(prev => [...prev.filter(x => x.currency !== p.currency), p])}
+            onUpdated={p => setPortfolios(prev => prev.map(x => x.currency === p.currency ? p : x))}
           />
         ))}
       </div>

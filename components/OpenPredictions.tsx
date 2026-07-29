@@ -6,6 +6,8 @@ import { Pagination } from './Pagination'
 import { SemaforoBadge } from './Semaforo'
 import type { DailyModelParam } from '@/app/page'
 import { bolsaKey, calibKey, findCalibratedConfidence, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
+import { classifyCosto, type CostoConfig } from '@/lib/tracking'
+import { useCostoConfig } from '@/lib/useCostoConfig'
 
 const PAGE_SIZE = 9
 
@@ -103,6 +105,7 @@ export function OpenPredictionsSection({
   const [confirming,     setConfirming]     = useState<string | null>(null)
   const [deleting,       setDeleting]       = useState<string | null>(null)
   const [page,           setPage]           = useState(1)
+  const { costoConfig } = useCostoConfig()
 
   // ── Live price polling ────────────────────────────────────────────────────
   const [livePrices,    setLivePrices]    = useState<Record<string, LivePrice>>({})
@@ -315,6 +318,7 @@ export function OpenPredictionsSection({
                     modelParam={dailyModelParams.find(d => d.horizon_bucket === p.horizon_days) ?? null}
                     bolsa={p.assets ? scorecardBolsas[bolsaKey(p.asset_id, p.assets.currency, p.horizon_days)] ?? null : null}
                     calibBins={p.assets ? confidenceCalibration[calibKey(p.assets.currency, p.horizon_days)] : undefined}
+                    costoConfig={p.assets ? costoConfig[p.assets.currency as 'usd' | 'ars'] : undefined}
                   />
                 ))}
               </div>
@@ -408,7 +412,7 @@ function PredictionConfidenceBlock({
   )
 }
 
-function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting, modelParam, bolsa, calibBins }: {
+function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConfirming, isDeleting, modelParam, bolsa, calibBins, costoConfig }: {
   p: ConsensusPrediction
   livePrice: LivePrice | null
   onClick: () => void
@@ -419,9 +423,13 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
   isDeleting: boolean
   bolsa?: ScorecardBolsa | null
   calibBins?: CalibrationBin[]
+  costoConfig?: CostoConfig
 }) {
   const calibratedConf = findCalibratedConfidence(p.confidence, calibBins)
   const asset = p.assets
+  const costo = classifyCosto({
+    finalPctPredicted: p.final_pct_predicted, source: 'daily', horizonValue: p.horizon_days, costoConfig,
+  })
   const predPct = p.final_pct_predicted
   const up = predPct >= 0
   const confPct = Math.round(p.confidence * 100)
@@ -578,6 +586,35 @@ function ConsensusCard({ p, livePrice, onClick, onDelete, onCancelDelete, isConf
             </div>
           )}
         </div>
+      </div>
+
+      {/* Etapa 21: filtro de costo de operación — ¿el movimiento esperado supera lo que cuesta
+          operarla en Balanz (ida y vuelta, IVA incluido)? Muestra ambos números, no un semáforo
+          ciego, y marca cuando la magnitud detrás del número no está calibrada todavía. */}
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
+          background: costo.superaCosto ? 'var(--up-soft)' : 'var(--down-soft)',
+          borderRadius: 8, padding: '9px 14px', marginBottom: 14,
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: costo.superaCosto ? 'var(--up)' : 'var(--down)' }}>
+          {costo.superaCosto ? '✓ Supera tu costo' : '✗ No cubre tu costo'}
+          {!costo.calibrado && (
+            <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 600, color: '#f59e0b', border: '1px solid #f59e0b66', borderRadius: 4, padding: '1px 5px' }}>
+              sin calibrar
+            </span>
+          )}
+          <InfoTip text={
+            costo.calibrado
+              ? `Movimiento esperado (magnitud calibrada contra el historial real, Etapa 17): ${costo.movimientoEsperadoPct.toFixed(2)}%. Costo de ida y vuelta configurado para este portfolio: ${costo.costoPct.toFixed(2)}%. Sólo filtra por costo de transacción — puede superar el costo y aun así no convenir operarla por otras razones.`
+              : `Este horizonte (30/60/90 días) todavía no tiene muestra cerrada suficiente para calibrar la magnitud (Etapa 17) — el ${costo.movimientoEsperadoPct.toFixed(2)}% mostrado es el número crudo del modelo y puede estar mal escalado. Costo configurado: ${costo.costoPct.toFixed(2)}%.`
+          } />
+        </span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)' }}>
+          {costo.movimientoEsperadoPct.toFixed(2)}% esperado · {costo.costoPct.toFixed(2)}% costo
+        </span>
       </div>
 
       {/* Bloque de confianza: error esperado + probabilidad de dirección */}

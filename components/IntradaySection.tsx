@@ -4,6 +4,8 @@ import { createBrowserClient } from '@supabase/ssr'
 import { SemaforoBadge } from './Semaforo'
 import { InfoTip } from './InfoTip'
 import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
+import { classifyCosto, type CostoConfig, type Currency } from '@/lib/tracking'
+import { useCostoConfig } from '@/lib/useCostoConfig'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const ANON_KEY     = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -255,7 +257,10 @@ function FiltersBar({ filters, onChange }: { filters: Filters; onChange: (f: Fil
 }
 
 // ── Predictions table ──────────────────────────────────────────────────────────
-function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraConsensus[]; showStatus?: boolean; scorecardBolsas?: Record<string, ScorecardBolsa> }) {
+function PredTable({ preds, showStatus, scorecardBolsas = {}, showCosto, costoConfig }: {
+  preds: IntraConsensus[]; showStatus?: boolean; scorecardBolsas?: Record<string, ScorecardBolsa>
+  showCosto?: boolean; costoConfig?: Record<Currency, CostoConfig>
+}) {
   const hasClosed = preds.some(p => p.actual_pct != null)
   const showPrices = !showStatus
   const headers = [
@@ -263,6 +268,7 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
     showPrices ? 'Precio actual' : null,
     showPrices ? 'Target' : null,
     showPrices ? 'Stop-loss' : null,
+    showCosto ? 'Costo' : null,
     'Pred %', 'Real %',
     hasClosed ? 'Δ Magnitud' : null,
     'Acuerdo',
@@ -277,6 +283,7 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
               <th key={h} style={{ ...th, textAlign: (h === 'Ticker' || h === 'Semáforo' || h === 'Dirección') ? 'left' : 'center', ...(h === 'Δ Magnitud' ? { color:'#f59e0b' } : {}) }}>
                 {h}
                 {h === 'Stop-loss' && <InfoTip text="Percentil 10 empírico de movimiento adverso histórico para este horizonte y clase de activo (Etapa 18) — el 10% de las predicciones pasadas tuvieron un retorno peor que este en la dirección predicha. Sugerencia informativa a partir de datos históricos, no una orden automática." />}
+                {h === 'Costo' && <InfoTip text="¿El movimiento esperado (magnitud calibrada, Etapa 22) supera el costo de ida y vuelta configurado para este portfolio (comisión Balanz + IVA, bonificación intradía aplicada)? Pasá el mouse sobre el ✓/✗ de cada fila para ver los dos números. Sólo filtra por costo de transacción, no es una recomendación de que convenga operar." />}
               </th>
             ))}
           </tr>
@@ -294,6 +301,12 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
             const bolsa = p.assets
               ? scorecardBolsas[bolsaKey(p.asset_id, p.assets.currency, p.horizon_minutes, 'minutes')] ?? null
               : null
+            // Etapa 21: filtro de costo de operación. final_pct_predicted ya viene calibrado
+            // (Etapa 22) — no se reaplica ningún factor acá, sólo se compara contra el costo.
+            const costo = showCosto ? classifyCosto({
+              finalPctPredicted: p.final_pct_predicted, source: 'intraday', horizonValue: p.horizon_minutes,
+              costoConfig: p.assets ? costoConfig?.[p.assets.currency as Currency] : undefined,
+            }) : null
             return (
               <tr key={p.id} style={{ borderBottom:'1px solid var(--border)' }}>
                 <td style={td({ fontWeight:700, ...mono })}>{p.assets?.ticker ?? '?'}</td>
@@ -315,6 +328,14 @@ function PredTable({ preds, showStatus, scorecardBolsas = {} }: { preds: IntraCo
                     {p.stop_loss_pct != null && p.price_at_creation != null
                       ? `$${(p.price_at_creation * (1 + (p.direction === 'up' ? p.stop_loss_pct : -p.stop_loss_pct) / 100)).toFixed(2)}`
                       : '—'}
+                  </td>
+                )}
+                {showCosto && costo && (
+                  <td style={td({ textAlign:'center' })}
+                    title={`${costo.movimientoEsperadoPct.toFixed(2)}% esperado vs ${costo.costoPct.toFixed(2)}% costo${!costo.calibrado ? ' (magnitud sin calibrar)' : ''}`}>
+                    <span style={{ fontSize:12, fontWeight:700, color: costo.superaCosto ? '#22c55e' : '#ef4444' }}>
+                      {costo.superaCosto ? '✓' : '✗'}
+                    </span>
                   </td>
                 )}
                 <td style={td({ textAlign:'center', ...mono })}>{p.final_pct_predicted >= 0 ? '+' : ''}{p.final_pct_predicted?.toFixed(2)}%</td>
@@ -1073,6 +1094,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
   const [lrParams, setLRParams]             = useState<LRParam[]>([])
   const [sessionStats, setSessionStats]     = useState<SessionModelStat[]>([])
   const marketOpen = isMarketOpen()
+  const { costoConfig } = useCostoConfig()
 
   // Light poll: open predictions + recent closed + weights — runs every 2 minutes
   const loadLight = useCallback(async () => {
@@ -1613,7 +1635,7 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
 
           {tab !== 'analysis' && paginated.length > 0 && (
             <div style={{ background:'var(--card)', border:'1px solid var(--border)', borderRadius:10, overflow:'hidden' }}>
-              <PredTable preds={paginated} showStatus={tab === 'closed'} scorecardBolsas={scorecardBolsas} />
+              <PredTable preds={paginated} showStatus={tab === 'closed'} scorecardBolsas={scorecardBolsas} showCosto={tab === 'open'} costoConfig={costoConfig} />
             </div>
           )}
 
