@@ -63,9 +63,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, portfolio: data })
 }
 
-// Etapa 21: edición del costo de ida y vuelta configurable (default = cálculo de la tabla Balanz,
-// ver migración add_costo_operacion_to_tracking_portfolios_etapa21). Sin PATCH parcial de
-// capital_inicial — eso no lo pedía ninguna etapa, sólo el costo es "configurable" por diseño.
+// Etapa 21 (+ backlog, a pedido explícito del usuario): edición del costo de ida y vuelta y del
+// capital inicial — el usuario quiere poder corregir el capital cargado cuando quiera, no sólo
+// fijarlo una vez al crear el portfolio.
 export async function PATCH(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -85,6 +85,13 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: `${field} debe ser un número ≥ 0` }, { status: 400 })
     }
     updates[field] = v
+  }
+  if (body?.capital_inicial !== undefined) {
+    const v = Number(body.capital_inicial)
+    if (!Number.isFinite(v) || v <= 0) {
+      return NextResponse.json({ ok: false, error: 'capital_inicial debe ser un número positivo' }, { status: 400 })
+    }
+    updates.capital_inicial = v
   }
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: false, error: 'Nada para actualizar' }, { status: 400 })

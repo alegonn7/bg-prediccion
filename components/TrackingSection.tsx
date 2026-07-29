@@ -84,9 +84,10 @@ function PortfolioCard({
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Etapa 21: costo de ida y vuelta configurable — el default (tabla Balanz) ya viene cargado
-  // en `portfolio` desde la creación (columnas con default en la migración), esto sólo permite
-  // editarlo después.
+  // Etapa 21 (+ backlog, a pedido explícito del usuario): capital inicial y costo de ida y vuelta
+  // configurables — el default de costo (tabla Balanz) ya viene cargado en `portfolio` desde la
+  // creación (columnas con default en la migración), esto permite editar ambos cuando quiera.
+  const [capitalEdit, setCapitalEdit] = useState('')
   const [costoNormal, setCostoNormal] = useState('')
   const [costoIntradia, setCostoIntradia] = useState('')
   const [savingCosto, setSavingCosto] = useState(false)
@@ -95,21 +96,27 @@ function PortfolioCard({
 
   useEffect(() => {
     if (!portfolio) return
+    setCapitalEdit(String(portfolio.capital_inicial))
     setCostoNormal(String(portfolio.costo_ida_vuelta_pct))
     setCostoIntradia(String(portfolio.costo_ida_vuelta_intradia_pct))
-  }, [portfolio?.costo_ida_vuelta_pct, portfolio?.costo_ida_vuelta_intradia_pct])
+  }, [portfolio?.capital_inicial, portfolio?.costo_ida_vuelta_pct, portfolio?.costo_ida_vuelta_intradia_pct])
 
-  async function handleSaveCosto() {
+  async function handleSavePortfolio() {
+    const capital = Number(capitalEdit)
     const normal = Number(costoNormal)
     const intradia = Number(costoIntradia)
+    if (!Number.isFinite(capital) || capital <= 0) { setCostoError('Ingresá un capital inicial válido'); return }
     if (!Number.isFinite(normal) || normal < 0 || !Number.isFinite(intradia) || intradia < 0) {
-      setCostoError('Ingresá porcentajes válidos (≥ 0)'); return
+      setCostoError('Ingresá porcentajes de costo válidos (≥ 0)'); return
     }
     setSavingCosto(true); setCostoError(null); setCostoSaved(false)
     const res = await fetchJson('/api/tracking/portfolios', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currency, costo_ida_vuelta_pct: normal, costo_ida_vuelta_intradia_pct: intradia }),
+      body: JSON.stringify({
+        currency, capital_inicial: capital,
+        costo_ida_vuelta_pct: normal, costo_ida_vuelta_intradia_pct: intradia,
+      }),
     })
     setSavingCosto(false)
     if (res.ok) {
@@ -190,23 +197,28 @@ function PortfolioCard({
         abiertas no mueven este número hasta que cierren.
       </div>
 
-      {/* Etapa 21: costo de ida y vuelta configurable, usado por los badges ✓/✗ de "Predicciones
-          activas" e "Intradiario" y por el aviso al cargar una operación acá abajo. */}
+      {/* Etapa 21 (+ backlog): capital inicial y costo de ida y vuelta, editables cuando quiera —
+          el costo alimenta los badges ✓/✗ de "Predicciones activas"/"Intradiario" y el filtro de
+          "Operaciones" más abajo. */}
       <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14 }}>
         <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-          Costo de ida y vuelta (Balanz)
-          <InfoTip text="Comisión + IVA de comprar y vender, usado por el filtro de costo (badges ✓/✗ en Predicciones activas e Intradiario, y el aviso al cargar una operación acá abajo). Default calculado de la tabla de comisiones Balanz 2026 confirmada por vos: 0.50% online + IVA 21% = 0.605% por pata. 'Normal' (1.21% = 0.605%×2) aplica a predicciones diarias; 'Intradía' (0.605% = 0.3025%×2, con la bonificación del 50% de Balanz por mismo plazo/moneda/especie) aplica a predicciones intradiarias. No incluye derechos de mercado de BYMA (margen chico, no cuantificado)." />
+          Editar portfolio
+          <InfoTip text="Capital inicial: base de la curva de capital y el retorno % — corregilo cuando quieras, recalcula todo con el valor nuevo. Costo de ida y vuelta: comisión + IVA de comprar y vender, usado por el filtro de costo (badges ✓/✗ en Predicciones activas e Intradiario, y el filtro de Operaciones). Default calculado de la tabla de comisiones Balanz 2026 confirmada por vos (+ derecho de mercado BYMA en ARS): 'Normal' aplica a predicciones diarias, 'Intradía' (con la bonificación por mismo plazo/moneda/especie) a predicciones intradiarias." />
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <div>
-            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Normal %</div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital inicial</div>
+            <input type="number" value={capitalEdit} onChange={e => setCapitalEdit(e.target.value)} style={{ ...inp, width: 110 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Costo normal %</div>
             <input type="number" step="0.01" value={costoNormal} onChange={e => setCostoNormal(e.target.value)} style={{ ...inp, width: 90 }} />
           </div>
           <div>
-            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Intradía %</div>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Costo intradía %</div>
             <input type="number" step="0.01" value={costoIntradia} onChange={e => setCostoIntradia(e.target.value)} style={{ ...inp, width: 90 }} />
           </div>
-          <button style={{ ...btn, opacity: savingCosto ? 0.6 : 1 }} disabled={savingCosto} onClick={handleSaveCosto}>
+          <button style={{ ...btn, opacity: savingCosto ? 0.6 : 1 }} disabled={savingCosto} onClick={handleSavePortfolio}>
             {savingCosto ? 'Guardando...' : costoSaved ? 'Guardado ✓' : 'Guardar'}
           </button>
         </div>
@@ -227,6 +239,7 @@ function LoadTradeForm({
   const [predictions, setPredictions] = useState<OpenPrediction[]>([])
   const [loadingPreds, setLoadingPreds] = useState(true)
   const [search, setSearch] = useState('')
+  const [horizonFilter, setHorizonFilter] = useState<number | null>(null)
   const [selected, setSelected] = useState<OpenPrediction | null>(null)
   const [monto, setMonto] = useState('')
   const [stopLoss, setStopLoss] = useState('')
@@ -264,26 +277,64 @@ function LoadTradeForm({
   }, [])
 
   useEffect(() => { loadPredictions(source) }, [source, loadPredictions])
+  useEffect(() => { setHorizonFilter(null) }, [source])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toUpperCase()
-    if (!q) return predictions.slice(0, 30)
-    return predictions.filter(p => p.assets?.ticker.toUpperCase().includes(q)).slice(0, 30)
-  }, [predictions, search])
-
-  // Etapa 21: mismo filtro de costo que los badges de "Predicciones activas"/"Intradiario",
-  // acá como aviso no bloqueante al elegir qué operación cargar.
-  const selectedCosto = useMemo(() => {
-    if (!selected?.assets) return null
-    const portfolio = portfolios.find(p => p.currency === selected.assets!.currency)
+  function costoFor(p: OpenPrediction) {
+    const portfolio = p.assets ? portfolios.find(pf => pf.currency === p.assets!.currency) : undefined
     return classifyCosto({
-      finalPctPredicted: selected.final_pct_predicted,
+      finalPctPredicted: p.final_pct_predicted,
       source,
-      horizonValue: selected.horizon_value,
+      horizonValue: p.horizon_value,
       costoConfig: portfolio
         ? { normal: portfolio.costo_ida_vuelta_pct, intradia: portfolio.costo_ida_vuelta_intradia_pct }
         : undefined,
     })
+  }
+
+  // Backlog post-21, a pedido explícito del usuario: acá (a diferencia de "Predicciones activas"/
+  // "Intradiario", que siguen mostrando todo) el buscador de operaciones filtra de verdad — sólo
+  // alcistas (el usuario no opera en corto) y que superen el costo configurado. No se muestra un
+  // "no cubre el costo" silencioso: directamente no aparece en la lista.
+  const qualifying = useMemo(() => {
+    return predictions
+      .filter(p => p.direction === 'up')
+      .map(p => ({ pred: p, costo: costoFor(p) }))
+      .filter(x => x.costo.superaCosto)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [predictions, portfolios, source])
+
+  const horizons = useMemo(
+    () => [...new Set(qualifying.map(x => x.pred.horizon_value))].sort((a, b) => a - b),
+    [qualifying]
+  )
+
+  // Top 5 por horizonte, rankeadas por movimiento esperado (magnitud calibrada) descendente — el
+  // filtro de horizonte no cambia el criterio, sólo achica qué horizontes se muestran.
+  const filtered = useMemo(() => {
+    const q = search.trim().toUpperCase()
+    let list = qualifying
+    if (q) list = list.filter(x => x.pred.assets?.ticker.toUpperCase().includes(q))
+    if (horizonFilter !== null) list = list.filter(x => x.pred.horizon_value === horizonFilter)
+
+    const byHorizon = new Map<number, typeof list>()
+    for (const item of list) {
+      const arr = byHorizon.get(item.pred.horizon_value) ?? []
+      arr.push(item)
+      byHorizon.set(item.pred.horizon_value, arr)
+    }
+    const top: typeof list = []
+    for (const h of [...byHorizon.keys()].sort((a, b) => a - b)) {
+      top.push(...byHorizon.get(h)!.sort((a, b) => b.costo.movimientoEsperadoPct - a.costo.movimientoEsperadoPct).slice(0, 5))
+    }
+    return top
+  }, [qualifying, search, horizonFilter])
+
+  // Mismo cálculo de costo que arriba, acá contra la predicción ya elegida — si llegó a la lista de
+  // arriba ya sabemos que supera el costo, pero se reusa para mostrar los números en el resumen.
+  const selectedCosto = useMemo(() => {
+    if (!selected?.assets) return null
+    return costoFor(selected)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, source, portfolios])
 
   function pick(p: OpenPrediction) {
@@ -338,9 +389,13 @@ function LoadTradeForm({
 
   return (
     <div style={card}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Cargar operación</div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Cargar operación</div>
+      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 10 }}>
+        Sólo alcistas que superan tu costo configurado — hasta 5 por horizonte, las de mayor movimiento
+        esperado primero.
+      </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <button onClick={() => { setSource('daily'); setSelected(null) }}
           style={{ ...btn, background: source === 'daily' ? 'var(--text)' : 'var(--bg-muted)', color: source === 'daily' ? 'var(--bg)' : 'var(--text-muted)' }}>
           Diario
@@ -353,13 +408,32 @@ function LoadTradeForm({
           style={{ ...inp, flex: 1, minWidth: 120 }} />
       </div>
 
+      {horizons.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+          <button onClick={() => setHorizonFilter(null)}
+            style={{ ...btn, padding: '4px 10px', fontSize: 11, background: horizonFilter === null ? 'var(--text)' : 'var(--bg-muted)', color: horizonFilter === null ? 'var(--bg)' : 'var(--text-muted)' }}>
+            Todos
+          </button>
+          {horizons.map(h => (
+            <button key={h} onClick={() => setHorizonFilter(h)}
+              style={{ ...btn, padding: '4px 10px', fontSize: 11, background: horizonFilter === h ? 'var(--text)' : 'var(--bg-muted)', color: horizonFilter === h ? 'var(--bg)' : 'var(--text-muted)' }}>
+              {source === 'daily' ? `${h}d` : `${h}min`}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loadingPreds ? (
         <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>Cargando predicciones abiertas...</p>
       ) : filtered.length === 0 ? (
-        <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>No hay predicciones abiertas que coincidan.</p>
+        <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>
+          {qualifying.length === 0
+            ? 'Ninguna predicción alcista supera tu costo configurado ahora mismo.'
+            : 'Ninguna coincide con los filtros elegidos.'}
+        </p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto', marginBottom: selected ? 14 : 0 }}>
-          {filtered.map(p => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto', marginBottom: selected ? 14 : 0 }}>
+          {filtered.map(({ pred: p, costo }) => (
             <button key={p.id} onClick={() => pick(p)}
               style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
@@ -369,8 +443,9 @@ function LoadTradeForm({
                 fontFamily: MONO, fontSize: 12, color: 'var(--text)',
               }}>
               <span>{p.assets?.ticker ?? '?'}</span>
-              <span style={{ color: p.direction === 'up' ? 'var(--up)' : 'var(--down)' }}>
-                {p.direction === 'up' ? '↑' : '↓'} {p.horizon_label}
+              <span style={{ color: 'var(--up)' }}>↑ {p.horizon_label}</span>
+              <span style={{ color: 'var(--text-hint)', fontSize: 11 }}>
+                {costo.movimientoEsperadoPct.toFixed(2)}% esp.{!costo.calibrado ? ' (sin calibrar)' : ''}
               </span>
               <span style={{ color: 'var(--text-hint)', fontSize: 11 }}>
                 {p.stop_loss_pct != null ? `stop ${p.stop_loss_pct.toFixed(2)}%` : 'sin stop sugerido'}
@@ -383,17 +458,21 @@ function LoadTradeForm({
       {selected && (
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
           <div style={{ fontSize: 12, marginBottom: 10 }}>
-            Cargando <strong>{selected.assets?.ticker}</strong> ({selected.direction === 'up' ? 'sube' : 'baja'}, {selected.horizon_label})
+            Cargando <strong>{selected.assets?.ticker}</strong> (sube, {selected.horizon_label})
           </div>
-          {selectedCosto && !selectedCosto.superaCosto && (
+          {/* La lista de arriba ya sólo muestra predicciones que superan el costo — este resumen
+              confirma los números, no advierte (para eso ya no llegaría a estar seleccionada). El
+              caveat de calibración sí se mantiene: que supere el costo no dice cuánto confiar en
+              el número si la magnitud de este horizonte todavía no está calibrada. */}
+          {selectedCosto && (
             <div style={{
-              background: 'var(--down-soft)', border: '1px solid var(--down)33', borderRadius: 8,
-              padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--down)',
+              background: 'var(--up-soft)', borderRadius: 8,
+              padding: '8px 12px', marginBottom: 10, fontSize: 11, color: 'var(--up)',
             }}>
-              ⚠ El movimiento esperado ({selectedCosto.movimientoEsperadoPct.toFixed(2)}%) no supera el costo
-              de ida y vuelta configurado ({selectedCosto.costoPct.toFixed(2)}%){!selectedCosto.calibrado
-                ? ' — además, la magnitud de este horizonte todavía no está calibrada, puede estar mal escalada'
-                : ''}. No bloquea la carga, es sólo información — puede haber otras razones para operarla igual.
+              ✓ Movimiento esperado {selectedCosto.movimientoEsperadoPct.toFixed(2)}% vs costo
+              {' '}{selectedCosto.costoPct.toFixed(2)}%{!selectedCosto.calibrado
+                ? ' — ojo: la magnitud de este horizonte todavía no está calibrada, puede estar mal escalada'
+                : ''}.
             </div>
           )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
