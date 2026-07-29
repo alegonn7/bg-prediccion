@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from 'react'
-import type { ClosedIntradayPred } from '@/app/page'
 import { ESTADO_META, type ScorecardBolsa, type Estado } from '@/lib/scorecard'
 import { InfoTip } from './InfoTip'
+import { useClosedPredictions } from '@/lib/useClosedPredictions'
+import { useIntradayScorecardStats } from '@/lib/useIntradayScorecardStats'
+import type { IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
 const MONO   = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const CYCLES = 400
@@ -41,18 +43,9 @@ function computeDailyGroup(preds: any[]): G {
   return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae, capturedPct, capturedN }
 }
 
-// Intraday: actual_pct field
-function computeIntradayGroup(preds: ClosedIntradayPred[]): G {
-  const evaled = preds.filter(p => p.direction_correct !== null)
-  const n      = evaled.length
-  const ok     = evaled.filter(p => p.direction_correct).length
-  const maePs  = evaled.filter(p => p.actual_pct != null && p.final_pct_predicted != null)
-  const mae    = maePs.length > 0
-    ? maePs.reduce((s, p) => s + Math.abs(Number(p.actual_pct) - Number(p.final_pct_predicted)), 0) / maePs.length
-    : null
-  const { capturedPct, capturedN } = computeCaptured(evaled, 'actual_pct')
-  return { n, ok, acc: n > 0 ? ok / n * 100 : null, mae, capturedPct, capturedN }
-}
+// Intraday: Backlog post-16 — este cálculo ahora vive en SQL (intraday_scorecard_stats), no acá.
+// Ver dashboard/lib/intradayScorecardStats.ts. computeDailyGroup arriba sigue igual: la diaria
+// (1147 filas hoy) no tiene el problema de volumen que tenía intradiario (67k+ filas).
 
 type DateRange = '30d' | '90d' | 'all'
 
@@ -85,27 +78,6 @@ function computeDailyByHorizon(preds: any[]): HorizonStat[] {
       mae: g.maeArr.length >= 3 ? g.maeArr.reduce((s, v) => s + v, 0) / g.maeArr.length : null,
     }
   })
-}
-
-function computeIntradayByHorizon(preds: ClosedIntradayPred[]): HorizonStat[] {
-  const groups: Record<number, { n: number; ok: number; maeArr: number[] }> = {}
-  for (const p of preds) {
-    if (p.direction_correct === null) continue
-    const h = p.horizon_minutes
-    if (!groups[h]) groups[h] = { n: 0, ok: 0, maeArr: [] }
-    groups[h].n++
-    if (p.direction_correct) groups[h].ok++
-    if (p.actual_pct != null && p.final_pct_predicted != null)
-      groups[h].maeArr.push(Math.abs(Number(p.actual_pct) - Number(p.final_pct_predicted)))
-  }
-  return Object.entries(groups)
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([h, g]) => ({
-      label: `${h}min`,
-      n: g.n, ok: g.ok,
-      acc: g.n >= 3 ? g.ok / g.n * 100 : null,
-      mae: g.maeArr.length >= 3 ? g.maeArr.reduce((s, v) => s + v, 0) / g.maeArr.length : null,
-    }))
 }
 
 function dirColor(v: number, target: number) {
@@ -416,32 +388,30 @@ const DATE_OPTS: { id: DateRange; label: string }[] = [
 ]
 
 export function ScorecardSection({
-  modelWeights, hits, total, closedPreds = [], closedIntradayPreds = [], scorecardBolsas = {},
+  modelWeights, hits, total, closedPreds = [], closedTruncated = false,
+  intradayStats, scorecardBolsas = {},
 }: {
   modelWeights: ModelWeight[]; hits: number; total: number
-  closedPreds?: any[]; closedIntradayPreds?: ClosedIntradayPred[]
+  closedPreds?: any[]; closedTruncated?: boolean
+  intradayStats: IntradayScorecardStats
   scorecardBolsas?: Record<string, ScorecardBolsa>
 }) {
   const [dateRange, setDateRange] = useState<DateRange>('all')
 
-  const filteredDaily = useMemo(() => {
-    if (dateRange === 'all') return closedPreds
-    const days   = dateRange === '30d' ? 30 : 90
-    const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
-    return closedPreds.filter((p: any) => p.target_date >= cutoff)
-  }, [closedPreds, dateRange])
-
-  const filteredIntraday = useMemo(() => {
-    if (dateRange === 'all') return closedIntradayPreds
-    const days   = dateRange === '30d' ? 30 : 90
-    const cutoff = new Date(Date.now() - days * 86400000).toISOString()
-    return closedIntradayPreds.filter(p => (p.closed_at ?? p.created_at) >= cutoff)
-  }, [closedIntradayPreds, dateRange])
+  // Etapa 16: este filtro de rango era un .filter() sobre un array que page.tsx ya traía
+  // truncado a 500 filas — ahora es una query real al servidor cada vez que cambia dateRange
+  // (ver useClosedPredictions).
+  const { rows: filteredDaily, truncated: dailyTruncated, loading: dailyLoading } =
+    useClosedPredictions('daily', dateRange, closedPreds, closedTruncated)
+  // Backlog post-16: intradiario ya no trae filas crudas al navegador (era inviable a su
+  // volumen) — son agregados calculados en SQL sobre TODO el rango pedido, sin cap de filas.
+  const { stats: intradayStatsLive, loading: intradayLoading } =
+    useIntradayScorecardStats(dateRange, intradayStats)
 
   const daily           = computeDailyGroup(filteredDaily)
-  const intraday        = computeIntradayGroup(filteredIntraday)
-  const dailyByHorizon  = useMemo(() => computeDailyByHorizon(filteredDaily),    [filteredDaily])
-  const intradayByHorizon = useMemo(() => computeIntradayByHorizon(filteredIntraday), [filteredIntraday])
+  const intraday        = intradayStatsLive.overall
+  const dailyByHorizon  = useMemo(() => computeDailyByHorizon(filteredDaily), [filteredDaily])
+  const intradayByHorizon = intradayStatsLive.byHorizon
 
   return (
     <section style={{ marginBottom: 64 }}>
@@ -451,7 +421,8 @@ export function ScorecardSection({
           ¿El sistema funciona?
         </h2>
         {/* Date range filter */}
-        <div style={{ display: 'flex', gap: 5 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          {(dailyLoading || intradayLoading) && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', marginRight: 4 }}>cargando…</span>}
           {DATE_OPTS.map(o => (
             <button key={o.id} onClick={() => setDateRange(o.id)} style={{
               padding: '5px 12px', fontSize: 11, fontFamily: MONO, border: '1px solid var(--border)', borderRadius: 6,
@@ -462,6 +433,12 @@ export function ScorecardSection({
           ))}
         </div>
       </div>
+
+      {dailyTruncated && (
+        <p style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', margin: '-16px 0 16px' }}>
+          Diario: mostrando sólo las predicciones cerradas más recientes disponibles — el volumen del rango elegido supera lo que se puede traer de una sola vez.
+        </p>
+      )}
 
       <BolsasSemaforoSummary scorecardBolsas={scorecardBolsas} />
 

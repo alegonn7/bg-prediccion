@@ -3,6 +3,8 @@ import { DashboardClient } from '@/components/DashboardClient'
 import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection'
 import { bolsaKey, calibKey, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
+import { fetchClosedPaginated, DAILY_CLOSED_SELECT, MAX_ROWS_DAILY } from '@/lib/closedPredictions'
+import { fetchIntradayScorecardStats, type IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
 export type { ModelLRParam, BacktestModelStat }
 
@@ -25,20 +27,6 @@ export type ChangelogEntry = {
   top_changed_feature: string | null
   feature_names: string[] | null
   summary: string | null
-}
-
-export type ClosedIntradayPred = {
-  id: string
-  direction: string
-  direction_correct: boolean | null
-  actual_pct: number | null
-  final_pct_predicted: number | null
-  agreement_pct: number | null
-  horizon_minutes: number
-  closed_at: string | null
-  created_at: string
-  asset_id: string
-  assets: { ticker: string; name: string } | null
 }
 
 export type CedearPair = {
@@ -74,10 +62,22 @@ async function getData() {
   const supabase = await createClient()
   const today = new Date().toISOString().slice(0, 10)
 
+  // Etapa 16: consensus_predictions cerradas ya no se trae acá con un .limit(500) fijo
+  // (silenciosamente truncaba "target_date DESC" a lo más reciente, rompiendo cualquier filtro
+  // de fecha que pidiera algo más viejo) — ver fetchClosedPaginated más abajo, corre en paralelo
+  // con el resto de las queries de esta página. Backlog post-16: el equivalente intradiario ya
+  // no trae filas crudas (era inviable a su volumen — 65k+ filas cerradas y creciendo miles/día)
+  // sino agregados calculados en SQL (intraday_scorecard_stats), sin límite de filas.
+  const closedPromise = Promise.all([
+    fetchClosedPaginated(supabase, {
+      table: 'consensus_predictions', dateCol: 'target_date', select: DAILY_CLOSED_SELECT,
+      since: null, maxRows: MAX_ROWS_DAILY,
+    }),
+    fetchIntradayScorecardStats(supabase, null),
+  ])
+
   const [
     { data: open },
-    { data: closed },
-    { data: closedIntraday },
     { data: modelWeights },
     { data: allAssets },
     { data: dailyModelParamsRaw },
@@ -101,22 +101,6 @@ async function getData() {
       `)
       .eq('status', 'open')
       .order('created_at', { ascending: false })
-      .limit(500),
-
-    supabase
-      .from('consensus_predictions')
-      .select(`id, direction, confidence, direction_correct, actual_final_pct,
-        final_pct_predicted, agreement_pct, target_date, horizon_days, created_at,
-        asset_id, assets(ticker, name, currency)`)
-      .eq('status', 'closed')
-      .order('target_date', { ascending: false })
-      .limit(500),
-
-    supabase
-      .from('consensus_predictions_intraday')
-      .select('id, direction, direction_correct, actual_pct, final_pct_predicted, agreement_pct, horizon_minutes, closed_at, created_at, asset_id, assets(ticker, name)')
-      .eq('status', 'closed')
-      .order('closed_at', { ascending: false })
       .limit(500),
 
     supabase
@@ -177,6 +161,11 @@ async function getData() {
       .order('fecha', { ascending: false })
       .limit(1),
   ])
+
+  const [
+    { rows: closed, truncated: closedTruncated },
+    intradayStats,
+  ] = await closedPromise
 
   // Etapa 6.2/6.3: pares CEDEAR (ars) <-> subyacente (usd) para la vista dual. underlying_ticker
   // y cedear_ratio se cargaron en esta misma sesión (ver migración etapa6_add_cedear_underlyings_and_ratios).
@@ -293,9 +282,10 @@ async function getData() {
   return {
     open: openWithPrices,
     closed: closedAll,
+    closedTruncated,
     scorecardBolsas,
     confidenceCalibration,
-    closedIntraday: (closedIntraday ?? []) as unknown as ClosedIntradayPred[],
+    intradayStats,
     modelWeights: modelWeights ?? [],
     hits:  closedAll.filter((c: any) => c.direction_correct).length,
     total: closedAll.length,
@@ -316,7 +306,7 @@ export const revalidate = 600
 
 export default async function Dashboard() {
   const {
-    open, closed, closedIntraday, modelWeights, hits, total, assets,
+    open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets,
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog,
@@ -326,7 +316,8 @@ export default async function Dashboard() {
     <DashboardClient
       open={open}
       closed={closed}
-      closedIntraday={closedIntraday}
+      closedTruncated={closedTruncated}
+      intradayStats={intradayStats}
       modelWeights={modelWeights}
       hits={hits}
       total={total}

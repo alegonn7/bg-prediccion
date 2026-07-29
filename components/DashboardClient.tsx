@@ -13,17 +13,19 @@ import { CedearDualSection } from './CedearDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
-import type { ChangelogEntry, DailyModelParam, ClosedIntradayPred, CedearPair, CclInfo } from '@/app/page'
+import type { ChangelogEntry, DailyModelParam, CedearPair, CclInfo } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
+import type { IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
 type Tab = 'scorecard' | 'open' | 'closed' | 'analysis' | 'settings' | 'news' | 'argentina' | 'intraday' | 'entrenamiento' | 'modelos'
 
 type Props = {
   open: any[]
   closed: any[]
-  closedIntraday: ClosedIntradayPred[]
+  closedTruncated: boolean
+  intradayStats: IntradayScorecardStats
   modelWeights: any[]
   hits: number
   total: number
@@ -42,7 +44,7 @@ type Props = {
 }
 
 export function DashboardClient({
-  open, closed, closedIntraday, modelWeights, hits, total, assets, openPredsSummary,
+  open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog,
   scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
 }: Props) {
@@ -111,12 +113,12 @@ export function DashboardClient({
           <button onClick={() => setActive('modelos')}       style={tabStyle(active === 'modelos')}>10 · Modelos</button>
         </nav>
 
-        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedIntradayPreds={closedIntraday} scorecardBolsas={scorecardBolsas} />}
+        {active === 'scorecard'     && <ScorecardSection modelWeights={modelWeights} hits={hits} total={total} closedPreds={closed} closedTruncated={closedTruncated} intradayStats={intradayStats} scorecardBolsas={scorecardBolsas} />}
         {active === 'open'          && <OpenPredictionsSection predictions={open} dailyModelParams={dailyModelParams} scorecardBolsas={scorecardBolsas} confidenceCalibration={confidenceCalibration} />}
         {active === 'intraday'      && <IntradaySectionClient scorecardBolsas={scorecardBolsas} />}
-        {active === 'closed'        && <ClosedPredictionsSection results={closed} scorecardBolsas={scorecardBolsas} />}
+        {active === 'closed'        && <ClosedPredictionsSection results={closed} truncated={closedTruncated} scorecardBolsas={scorecardBolsas} />}
         {active === 'settings'      && <SettingsSection initialAssets={assets} initialOpenPreds={openPredsSummary} />}
-        {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} />}
+        {active === 'analysis'      && <ModelAnalysisSection closedPreds={closed} closedTruncated={closedTruncated} />}
         {active === 'news'          && <NewsSectionClient />}
         {active === 'argentina'     && (
           <>

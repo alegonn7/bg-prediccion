@@ -1,5 +1,6 @@
 'use client'
 import { useState, useMemo } from 'react'
+import { useClosedPredictions } from '@/lib/useClosedPredictions'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const DAILY_BUCKETS = [1, 7, 14, 30, 60, 90]
@@ -54,7 +55,7 @@ function SLabel({ children, style = {} }: { children: React.ReactNode; style?: R
   )
 }
 
-export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[] }) {
+export function ModelAnalysisSection({ closedPreds, closedTruncated = false }: { closedPreds: ClosedPred[]; closedTruncated?: boolean }) {
   const [dateRange,     setDateRange]     = useState<DateRange>('all')
   const [horizonFilter, setHorizonFilter] = useState<number | null>(null)
   const [sortTicker,    setSortTicker]    = useState<SortTicker>('n')
@@ -64,13 +65,9 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
   function setHorizon(h: number | null) { setHorizonFilter(h); resetPage() }
   function setSort(s: SortTicker) { setSortTicker(s); resetPage() }
 
-  // 1. filter by date
-  const byDate = useMemo(() => {
-    if (dateRange === 'all') return closedPreds
-    const days  = dateRange === '30d' ? 30 : 90
-    const cutoff = Date.now() - days * 86400000
-    return closedPreds.filter(p => p.target_date && new Date(p.target_date + 'T12:00:00').getTime() >= cutoff)
-  }, [closedPreds, dateRange])
+  // 1. filter by date — Etapa 16: ahora es una query real al servidor (ver
+  // useClosedPredictions), no un .filter() sobre un array que page.tsx ya traía truncado.
+  const { rows: byDate, truncated, loading: dateLoading } = useClosedPredictions('daily', dateRange, closedPreds, closedTruncated)
 
   // 2. filter by horizon
   const evaled = useMemo(() => {
@@ -216,10 +213,17 @@ export function ModelAnalysisSection({ closedPreds }: { closedPreds: ClosedPred[
             )}
           </div>
           {/* Date range */}
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {dateLoading && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>cargando…</span>}
             {DATE_OPTS.map(o => pillBtn(dateRange === o.id, () => { setDateRange(o.id); resetPage() }, o.label))}
           </div>
         </div>
+
+        {truncated && (
+          <p style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', margin: 0 }}>
+            Mostrando sólo las predicciones cerradas más recientes disponibles — el volumen del rango elegido supera lo que se puede traer de una sola vez.
+          </p>
+        )}
 
         {/* Horizon filter */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>

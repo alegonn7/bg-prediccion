@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Pagination } from './Pagination'
 import { SemaforoBadge } from './Semaforo'
 import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
+import { useClosedPredictions } from '@/lib/useClosedPredictions'
 
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const COLS = '0.7fr 0.8fr 1fr 1fr 1fr 1fr 1.4fr'
@@ -23,18 +24,6 @@ type ClosedConsensus = {
 
 type DateFilter = '7d' | '30d' | 'month' | 'all'
 
-function filterByDate(items: ClosedConsensus[], filter: DateFilter): ClosedConsensus[] {
-  if (filter === 'all') return items
-  const now = new Date()
-  return items.filter(r => {
-    const d = new Date(r.target_date + 'T12:00:00')
-    if (filter === '7d')    return now.getTime() - d.getTime() <= 7  * 86400000
-    if (filter === '30d')   return now.getTime() - d.getTime() <= 30 * 86400000
-    if (filter === 'month') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
-    return true
-  })
-}
-
 const DATE_FILTER_OPTS: { id: DateFilter; label: string }[] = [
   { id: '7d',    label: 'Últ. 7 días' },
   { id: '30d',   label: 'Últ. 30 días' },
@@ -42,11 +31,13 @@ const DATE_FILTER_OPTS: { id: DateFilter; label: string }[] = [
   { id: 'all',   label: 'Todo' },
 ]
 
-export function ClosedPredictionsSection({ results, scorecardBolsas = {} }: { results: ClosedConsensus[]; scorecardBolsas?: Record<string, ScorecardBolsa> }) {
+export function ClosedPredictionsSection({ results, truncated: resultsTruncated = false, scorecardBolsas = {} }: { results: ClosedConsensus[]; truncated?: boolean; scorecardBolsas?: Record<string, ScorecardBolsa> }) {
   const [page, setPage] = useState(1)
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
 
-  const filtered = filterByDate(results, dateFilter)
+  // Etapa 16: antes filtraba en el cliente sobre `results`, que page.tsx ya traía truncado a
+  // 500 filas por target_date DESC — ahora es una query real al servidor por cada rango.
+  const { rows: filtered, truncated, loading } = useClosedPredictions('daily', dateFilter, results, resultsTruncated)
   const hits    = filtered.filter(r => r.direction_correct === true).length
   const misses  = filtered.filter(r => r.direction_correct === false).length
   const accuracy = (hits + misses) > 0 ? (hits / (hits + misses) * 100).toFixed(1) : null
@@ -67,7 +58,8 @@ export function ClosedPredictionsSection({ results, scorecardBolsas = {} }: { re
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {loading && <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)' }}>cargando…</span>}
           {DATE_FILTER_OPTS.map(o => (
             <button
               key={o.id}
@@ -85,6 +77,12 @@ export function ClosedPredictionsSection({ results, scorecardBolsas = {} }: { re
           ))}
         </div>
       </div>
+
+      {truncated && (
+        <p style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-hint)', margin: '-8px 0 16px' }}>
+          Mostrando sólo las predicciones cerradas más recientes disponibles — el volumen del período elegido supera lo que se puede traer de una sola vez.
+        </p>
+      )}
 
       {filtered.length === 0 ? (
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 14, padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }}>
