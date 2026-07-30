@@ -18,6 +18,7 @@ export type TrackingTrade = {
   intraday_prediction_id: string | null
   direction: 'up' | 'down'
   monto_invertido: number
+  cantidad: number | null
   stop_loss_sugerido_pct: number | null
   stop_loss_usado_pct: number
   take_profit_pct: number | null

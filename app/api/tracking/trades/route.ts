@@ -12,8 +12,8 @@ export async function GET() {
     .from('tracking_trades')
     .select(`
       id, portfolio_id, asset_id, prediction_type, daily_prediction_id, intraday_prediction_id,
-      direction, monto_invertido, stop_loss_sugerido_pct, stop_loss_usado_pct, take_profit_pct,
-      entry_price, status, exit_price, pnl_pct, pnl_monto, opened_at, closed_at,
+      direction, monto_invertido, cantidad, stop_loss_sugerido_pct, stop_loss_usado_pct,
+      take_profit_pct, entry_price, status, exit_price, pnl_pct, pnl_monto, opened_at, closed_at,
       assets(ticker, name)
     `)
     .order('opened_at', { ascending: false })
@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
   const intradayPredictionId = body?.intraday_prediction_id as string | null | undefined
   const direction = body?.direction as 'up' | 'down' | undefined
   const montoInvertido = Number(body?.monto_invertido)
+  const cantidad = body?.cantidad != null && body.cantidad !== '' ? Number(body.cantidad) : null
   const stopLossSugeridoPct = body?.stop_loss_sugerido_pct != null ? Number(body.stop_loss_sugerido_pct) : null
   const stopLossUsadoPct = Number(body?.stop_loss_usado_pct)
   const takeProfitPct = body?.take_profit_pct != null && body.take_profit_pct !== '' ? Number(body.take_profit_pct) : null
@@ -73,6 +74,9 @@ export async function POST(req: NextRequest) {
   }
   if (!Number.isFinite(montoInvertido) || montoInvertido <= 0) {
     return NextResponse.json({ ok: false, error: 'monto_invertido debe ser un número positivo' }, { status: 400 })
+  }
+  if (cantidad != null && (!Number.isFinite(cantidad) || cantidad <= 0)) {
+    return NextResponse.json({ ok: false, error: 'cantidad debe ser un número positivo (o dejarla vacía)' }, { status: 400 })
   }
   if (!Number.isFinite(stopLossUsadoPct)) {
     return NextResponse.json({ ok: false, error: 'stop_loss_usado_pct debe ser un número' }, { status: 400 })
@@ -116,6 +120,7 @@ export async function POST(req: NextRequest) {
       intraday_prediction_id: intradayPredictionId ?? null,
       direction,
       monto_invertido: montoInvertido,
+      cantidad,
       stop_loss_sugerido_pct: stopLossSugeridoPct,
       stop_loss_usado_pct: stopLossUsadoPct,
       take_profit_pct: takeProfitPct,
@@ -123,8 +128,8 @@ export async function POST(req: NextRequest) {
     })
     .select(`
       id, portfolio_id, asset_id, prediction_type, daily_prediction_id, intraday_prediction_id,
-      direction, monto_invertido, stop_loss_sugerido_pct, stop_loss_usado_pct, take_profit_pct,
-      entry_price, status, exit_price, pnl_pct, pnl_monto, opened_at, closed_at,
+      direction, monto_invertido, cantidad, stop_loss_sugerido_pct, stop_loss_usado_pct,
+      take_profit_pct, entry_price, status, exit_price, pnl_pct, pnl_monto, opened_at, closed_at,
       assets(ticker, name)
     `)
     .single()

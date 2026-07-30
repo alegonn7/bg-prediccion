@@ -26,7 +26,7 @@ type OpenPrediction = {
   horizon_label: string
   horizon_value: number
   final_pct_predicted: number
-  assets: { ticker: string; name: string; currency: Currency } | null
+  assets: { ticker: string; name: string; currency: Currency; core_bucket: string | null } | null
 }
 
 const inp: React.CSSProperties = {
@@ -315,10 +315,13 @@ function LoadTradeForm({
   const [loadingPreds, setLoadingPreds] = useState(true)
   const [search, setSearch] = useState('')
   const [horizonFilter, setHorizonFilter] = useState<number | null>(null)
+  const [onlyCedears, setOnlyCedears] = useState(false)
   const [selected, setSelected] = useState<OpenPrediction | null>(null)
-  const [monto, setMonto] = useState('')
+  const [cantidad, setCantidad] = useState('')
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
+  const [entryPriceInput, setEntryPriceInput] = useState('')
+  const [fetchingPrice, setFetchingPrice] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -327,7 +330,7 @@ function LoadTradeForm({
     if (src === 'daily') {
       const { data } = await supabase
         .from('consensus_predictions')
-        .select('id, asset_id, direction, horizon_days, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency)')
+        .select('id, asset_id, direction, horizon_days, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency, core_bucket)')
         .eq('status', 'open')
         .order('created_at', { ascending: false })
         .limit(500)
@@ -339,7 +342,7 @@ function LoadTradeForm({
     } else {
       const { data } = await supabase
         .from('consensus_predictions_intraday')
-        .select('id, asset_id, direction, horizon_minutes, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency)')
+        .select('id, asset_id, direction, horizon_minutes, stop_loss_pct, final_pct_predicted, assets(ticker, name, currency, core_bucket)')
         .eq('status', 'open')
         .order('created_at', { ascending: false })
         .limit(500)
@@ -370,14 +373,18 @@ function LoadTradeForm({
   // Backlog post-21, a pedido explícito del usuario: acá (a diferencia de "Predicciones activas"/
   // "Intradiario", que siguen mostrando todo) el buscador de operaciones filtra de verdad — sólo
   // alcistas (el usuario no opera en corto) y que superen el costo configurado. No se muestra un
-  // "no cubre el costo" silencioso: directamente no aparece en la lista.
+  // "no cubre el costo" silencioso: directamente no aparece en la lista. `onlyCedears` (toggle,
+  // pedido después) usa `core_bucket==='cedear_arg'`, no `currency==='ars'` — hoy coinciden 1 a 1
+  // (10/10 activos core, confirmado por SQL) pero `core_bucket` es la fuente correcta si algún día
+  // se agrega otro tipo de activo en pesos que no sea CEDEAR.
   const qualifying = useMemo(() => {
     return predictions
       .filter(p => p.direction === 'up')
+      .filter(p => !onlyCedears || p.assets?.core_bucket === 'cedear_arg')
       .map(p => ({ pred: p, costo: costoFor(p) }))
       .filter(x => x.costo.superaCosto)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [predictions, portfolios, source])
+  }, [predictions, portfolios, source, onlyCedears])
 
   const horizons = useMemo(
     () => [...new Set(qualifying.map(x => x.pred.horizon_value))].sort((a, b) => a - b),
@@ -413,12 +420,19 @@ function LoadTradeForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, source, portfolios])
 
-  function pick(p: OpenPrediction) {
+  async function pick(p: OpenPrediction) {
     setSelected(p)
-    setMonto('')
+    setCantidad('')
     setStopLoss(p.stop_loss_pct != null ? String(p.stop_loss_pct) : '')
     setTakeProfit('')
+    setEntryPriceInput('')
     setError(null)
+    if (!p.assets) return
+    setFetchingPrice(true)
+    const quote = await fetchJson(`/api/finnhub/quote?symbol=${encodeURIComponent(p.assets.ticker)}`)
+    setFetchingPrice(false)
+    const live = quote?.c as number | undefined
+    if (live && live > 0) setEntryPriceInput(String(live))
   }
 
   async function confirm() {
@@ -427,21 +441,19 @@ function LoadTradeForm({
     const portfolio = portfolios.find(p => p.currency === currency)
     if (!portfolio) { setError(`Creá primero el portfolio ${CURRENCY_LABEL[currency]}`); return }
 
-    const montoNum = Number(monto)
+    const cantidadNum = Number(cantidad)
     const stopLossNum = Number(stopLoss)
     const takeProfitNum = takeProfit.trim() === '' ? null : Number(takeProfit)
-    if (!Number.isFinite(montoNum) || montoNum <= 0) { setError('Ingresá un monto invertido válido'); return }
+    const entryPrice = Number(entryPriceInput)
+    if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) { setError('Ingresá una cantidad válida'); return }
     if (!Number.isFinite(stopLossNum)) { setError('Ingresá un stop-loss válido'); return }
     if (takeProfitNum != null && (!Number.isFinite(takeProfitNum) || takeProfitNum <= 0)) {
       setError('El take-profit tiene que ser un número positivo (o dejarlo vacío)'); return
     }
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) { setError('Ingresá un precio de entrada válido'); return }
 
     setSubmitting(true); setError(null)
     try {
-      const quote = await fetchJson(`/api/finnhub/quote?symbol=${encodeURIComponent(selected.assets.ticker)}`)
-      const entryPrice = quote?.c as number | undefined
-      if (!entryPrice || entryPrice <= 0) { setError('No se pudo obtener el precio en vivo del activo'); return }
-
       const res = await fetchJson('/api/tracking/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -451,7 +463,8 @@ function LoadTradeForm({
           daily_prediction_id: source === 'daily' ? selected.id : null,
           intraday_prediction_id: source === 'intraday' ? selected.id : null,
           direction: selected.direction,
-          monto_invertido: montoNum,
+          monto_invertido: cantidadNum * entryPrice,
+          cantidad: cantidadNum,
           stop_loss_sugerido_pct: selected.stop_loss_pct,
           stop_loss_usado_pct: stopLossNum,
           take_profit_pct: takeProfitNum,
@@ -460,7 +473,7 @@ function LoadTradeForm({
       })
       if (res.ok) {
         onCreated(res.trade)
-        setSelected(null); setMonto(''); setStopLoss(''); setTakeProfit('')
+        setSelected(null); setCantidad(''); setStopLoss(''); setTakeProfit('')
       } else {
         setError(res.error ?? 'No se pudo cargar la operación')
       }
@@ -485,6 +498,11 @@ function LoadTradeForm({
         <button onClick={() => { setSource('intraday'); setSelected(null) }}
           style={{ ...btn, background: source === 'intraday' ? 'var(--text)' : 'var(--bg-muted)', color: source === 'intraday' ? 'var(--bg)' : 'var(--text-muted)' }}>
           Intradiario
+        </button>
+        <button onClick={() => { setOnlyCedears(v => !v); setSelected(null) }}
+          aria-pressed={onlyCedears}
+          style={{ ...btn, background: onlyCedears ? 'var(--text)' : 'var(--bg-muted)', color: onlyCedears ? 'var(--bg)' : 'var(--text-muted)' }}>
+          Sólo CEDEARs
         </button>
         <input type="text" placeholder="Buscar ticker..." value={search} onChange={e => setSearch(e.target.value)}
           style={{ ...inp, flex: 1, minWidth: 120 }} />
@@ -559,9 +577,21 @@ function LoadTradeForm({
           )}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Monto invertido</div>
-              <input type="number" value={monto} onChange={e => setMonto(e.target.value)} style={{ ...inp, width: 130 }} />
+              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                Precio de entrada
+                {fetchingPrice && <span style={{ color: 'var(--text-hint)', fontWeight: 400 }}>(cargando...)</span>}
+              </div>
+              <input type="number" value={entryPriceInput} onChange={e => setEntryPriceInput(e.target.value)} style={{ ...inp, width: 110 }} />
             </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Cantidad</div>
+              <input type="number" value={cantidad} onChange={e => setCantidad(e.target.value)} style={{ ...inp, width: 90 }} />
+            </div>
+            {Number(cantidad) > 0 && Number(entryPriceInput) > 0 && selected.assets && (
+              <div style={{ fontSize: 11, color: 'var(--text-hint)', fontFamily: MONO }}>
+                = {formatMoney(Number(cantidad) * Number(entryPriceInput), selected.assets.currency)}
+              </div>
+            )}
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
                 Stop-loss %
@@ -708,7 +738,12 @@ function TradesList({ trades, portfolios }: { trades: TrackingTrade[]; portfolio
                 <td style={{ padding: '6px 8px', color: t.direction === 'up' ? 'var(--up)' : 'var(--down)' }}>
                   {t.direction === 'up' ? '↑' : '↓'}
                 </td>
-                <td style={{ padding: '6px 8px' }}>{formatMoney(t.monto_invertido, currency)}</td>
+                <td style={{ padding: '6px 8px' }}>
+                  {formatMoney(t.monto_invertido, currency)}
+                  {t.cantidad != null && (
+                    <span style={{ color: 'var(--text-hint)', fontSize: 11 }}> ({t.cantidad} @ {formatMoney(t.entry_price, currency)})</span>
+                  )}
+                </td>
                 <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>
                   {t.status === 'abierta' ? 'Abierta'
                     : t.status === 'cerrada_por_stop' ? 'Cerrada · stop'
