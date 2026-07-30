@@ -320,6 +320,7 @@ function LoadTradeForm({
   const [cantidad, setCantidad] = useState('')
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
+  const [takeProfitPrice, setTakeProfitPrice] = useState('')
   const [entryPriceInput, setEntryPriceInput] = useState('')
   const [fetchingPrice, setFetchingPrice] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -425,6 +426,7 @@ function LoadTradeForm({
     setCantidad('')
     setStopLoss(p.stop_loss_pct != null ? String(p.stop_loss_pct) : '')
     setTakeProfit('')
+    setTakeProfitPrice('')
     setEntryPriceInput('')
     setError(null)
     if (!p.assets) return
@@ -433,6 +435,30 @@ function LoadTradeForm({
     setFetchingPrice(false)
     const live = quote?.c as number | undefined
     if (live && live > 0) setEntryPriceInput(String(live))
+  }
+
+  // Take-profit % ↔ precio objetivo, enlazados en las dos direcciones (a pedido explícito del
+  // usuario: "tener ambas cosas y que se autocomplete"). take_profit_pct sigue siendo lo único que
+  // se manda al servidor (columna existente, positivo = magnitud a favor sin importar dirección) —
+  // el precio es sólo una forma más cómoda de escribirlo, no se guarda aparte.
+  function onTakeProfitPctChange(v: string) {
+    setTakeProfit(v)
+    const pct = Number(v)
+    const entry = Number(entryPriceInput)
+    if (v.trim() === '' ) { setTakeProfitPrice(''); return }
+    if (!Number.isFinite(pct) || !Number.isFinite(entry) || entry <= 0 || !selected) return
+    const price = selected.direction === 'up' ? entry * (1 + pct / 100) : entry * (1 - pct / 100)
+    setTakeProfitPrice(price > 0 ? price.toFixed(2) : '')
+  }
+
+  function onTakeProfitPriceChange(v: string) {
+    setTakeProfitPrice(v)
+    const price = Number(v)
+    const entry = Number(entryPriceInput)
+    if (v.trim() === '') { setTakeProfit(''); return }
+    if (!Number.isFinite(price) || !Number.isFinite(entry) || entry <= 0 || !selected) return
+    const pct = selected.direction === 'up' ? (price - entry) / entry * 100 : (entry - price) / entry * 100
+    setTakeProfit(pct > 0 ? pct.toFixed(2) : '')
   }
 
   async function confirm() {
@@ -473,7 +499,7 @@ function LoadTradeForm({
       })
       if (res.ok) {
         onCreated(res.trade)
-        setSelected(null); setCantidad(''); setStopLoss(''); setTakeProfit('')
+        setSelected(null); setCantidad(''); setStopLoss(''); setTakeProfit(''); setTakeProfitPrice('')
       } else {
         setError(res.error ?? 'No se pudo cargar la operación')
       }
@@ -602,9 +628,13 @@ function LoadTradeForm({
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
                 Take-profit %
-                <InfoTip text="Precio al que querés vender: si el activo llega a esta magnitud de movimiento a favor, se cierra ahí, sin importar el target de la predicción ni el horizonte. Es positivo (magnitud, no importa la dirección). Opcional — si lo dejás vacío, la operación sólo cierra por stop-loss o cuando venza la predicción subyacente." />
+                <InfoTip text="Si el activo llega a esta magnitud de movimiento a favor, se cierra ahí, sin importar el target de la predicción ni el horizonte. Es positivo (magnitud, no importa la dirección). Opcional — si lo dejás vacío, la operación sólo cierra por stop-loss o cuando venza la predicción subyacente. Enlazado con 'Vender a' — completá cualquiera de los dos y el otro se calcula solo." />
               </div>
-              <input type="number" placeholder="opcional" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} style={{ ...inp, width: 100 }} />
+              <input type="number" placeholder="opcional" value={takeProfit} onChange={e => onTakeProfitPctChange(e.target.value)} style={{ ...inp, width: 90 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Vender a</div>
+              <input type="number" placeholder="opcional" value={takeProfitPrice} onChange={e => onTakeProfitPriceChange(e.target.value)} style={{ ...inp, width: 100 }} />
             </div>
             <button style={btn} disabled={submitting} onClick={confirm}>
               {submitting ? 'Cargando...' : 'Confirmar operación'}
