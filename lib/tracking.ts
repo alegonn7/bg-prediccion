@@ -20,8 +20,9 @@ export type TrackingTrade = {
   monto_invertido: number
   stop_loss_sugerido_pct: number | null
   stop_loss_usado_pct: number
+  take_profit_pct: number | null
   entry_price: number
-  status: 'abierta' | 'cerrada_normal' | 'cerrada_por_stop'
+  status: 'abierta' | 'cerrada_normal' | 'cerrada_por_stop' | 'cerrada_por_take_profit'
   exit_price: number | null
   pnl_pct: number | null
   pnl_monto: number | null

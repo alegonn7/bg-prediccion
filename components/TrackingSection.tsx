@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import { InfoTip } from './InfoTip'
 import {
   computeCapitalCurve, formatMoney, classifyCosto,
@@ -318,6 +318,7 @@ function LoadTradeForm({
   const [selected, setSelected] = useState<OpenPrediction | null>(null)
   const [monto, setMonto] = useState('')
   const [stopLoss, setStopLoss] = useState('')
+  const [takeProfit, setTakeProfit] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -416,6 +417,7 @@ function LoadTradeForm({
     setSelected(p)
     setMonto('')
     setStopLoss(p.stop_loss_pct != null ? String(p.stop_loss_pct) : '')
+    setTakeProfit('')
     setError(null)
   }
 
@@ -427,8 +429,12 @@ function LoadTradeForm({
 
     const montoNum = Number(monto)
     const stopLossNum = Number(stopLoss)
+    const takeProfitNum = takeProfit.trim() === '' ? null : Number(takeProfit)
     if (!Number.isFinite(montoNum) || montoNum <= 0) { setError('Ingresá un monto invertido válido'); return }
     if (!Number.isFinite(stopLossNum)) { setError('Ingresá un stop-loss válido'); return }
+    if (takeProfitNum != null && (!Number.isFinite(takeProfitNum) || takeProfitNum <= 0)) {
+      setError('El take-profit tiene que ser un número positivo (o dejarlo vacío)'); return
+    }
 
     setSubmitting(true); setError(null)
     try {
@@ -448,12 +454,13 @@ function LoadTradeForm({
           monto_invertido: montoNum,
           stop_loss_sugerido_pct: selected.stop_loss_pct,
           stop_loss_usado_pct: stopLossNum,
+          take_profit_pct: takeProfitNum,
           entry_price: entryPrice,
         }),
       })
       if (res.ok) {
         onCreated(res.trade)
-        setSelected(null); setMonto(''); setStopLoss('')
+        setSelected(null); setMonto(''); setStopLoss(''); setTakeProfit('')
       } else {
         setError(res.error ?? 'No se pudo cargar la operación')
       }
@@ -562,6 +569,13 @@ function LoadTradeForm({
               </div>
               <input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} style={{ ...inp, width: 100 }} />
             </div>
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                Take-profit %
+                <InfoTip text="Precio al que querés vender: si el activo llega a esta magnitud de movimiento a favor, se cierra ahí, sin importar el target de la predicción ni el horizonte. Es positivo (magnitud, no importa la dirección). Opcional — si lo dejás vacío, la operación sólo cierra por stop-loss o cuando venza la predicción subyacente." />
+              </div>
+              <input type="number" placeholder="opcional" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} style={{ ...inp, width: 100 }} />
+            </div>
             <button style={btn} disabled={submitting} onClick={confirm}>
               {submitting ? 'Cargando...' : 'Confirmar operación'}
             </button>
@@ -573,6 +587,91 @@ function LoadTradeForm({
           {error && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 8 }}>{error}</p>}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Estadísticas históricas + gráfico de P&L por operación ──────────────
+// Backlog post-21, a pedido explícito del usuario ("quiero ver históricamente cómo me ha ido").
+// Usa `pnl_pct` (no `pnl_monto`) para poder mezclar operaciones ARS/USD en el mismo gráfico sin
+// sumar monedas distintas.
+function TradeStats({ trades }: { trades: TrackingTrade[] }) {
+  const closed = useMemo(
+    () => trades
+      .filter(t => t.status !== 'abierta' && t.pnl_pct != null && t.closed_at != null)
+      .sort((a, b) => new Date(a.closed_at!).getTime() - new Date(b.closed_at!).getTime()),
+    [trades]
+  )
+
+  if (closed.length === 0) {
+    return <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>Las estadísticas aparecen cuando se cierre la primera operación.</p>
+  }
+
+  const ganadoras = closed.filter(t => t.pnl_pct! > 0).length
+  const perdedoras = closed.filter(t => t.pnl_pct! < 0).length
+  const winRate = (ganadoras / closed.length) * 100
+  const mejor = closed.reduce((a, b) => (b.pnl_pct! > a.pnl_pct! ? b : a))
+  const peor = closed.reduce((a, b) => (b.pnl_pct! < a.pnl_pct! ? b : a))
+  const porStop = closed.filter(t => t.status === 'cerrada_por_stop').length
+  const porTakeProfit = closed.filter(t => t.status === 'cerrada_por_take_profit').length
+  const porNormal = closed.filter(t => t.status === 'cerrada_normal').length
+
+  const chartData = closed.map((t, i) => ({
+    idx: i + 1, ticker: t.assets?.ticker ?? '?', pnl: t.pnl_pct!,
+    date: new Date(t.closed_at!).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }),
+  }))
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Cerradas</div>
+          <div style={{ fontFamily: MONO, fontSize: 15 }}>{closed.length}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Win rate</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: winRate >= 50 ? 'var(--up)' : 'var(--down)' }}>
+            {winRate.toFixed(0)}% <span style={{ fontSize: 11, color: 'var(--text-hint)', fontWeight: 400 }}>({ganadoras}/{perdedoras})</span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Mejor</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, color: 'var(--up)' }}>+{mejor.pnl_pct!.toFixed(2)}%
+            <span style={{ fontSize: 11, color: 'var(--text-hint)' }}> {mejor.assets?.ticker}</span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Peor</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, color: 'var(--down)' }}>{peor.pnl_pct!.toFixed(2)}%
+            <span style={{ fontSize: 11, color: 'var(--text-hint)' }}> {peor.assets?.ticker}</span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Cómo cerraron</div>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted)' }}>
+            {porNormal} normal · {porStop} stop · {porTakeProfit} take-profit
+          </div>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={160}>
+        <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="idx" tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
+          <Tooltip
+            contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: MONO, fontSize: 11 }}
+            formatter={(v: unknown) => [`${Number(v).toFixed(2)}%`, 'P&L']}
+            labelFormatter={(_, payload) => payload?.[0]?.payload ? `${payload[0].payload.ticker} · ${payload[0].payload.date}` : ''}
+          />
+          <Bar dataKey="pnl">
+            {chartData.map((d, i) => <Cell key={i} fill={d.pnl >= 0 ? 'var(--up)' : 'var(--down)'} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginTop: 6 }}>
+        P&amp;L % por operación cerrada, en orden cronológico (todas las monedas juntas — por eso % y no
+        monto, para no mezclar ARS/USD).
+      </div>
     </div>
   )
 }
@@ -611,7 +710,10 @@ function TradesList({ trades, portfolios }: { trades: TrackingTrade[]; portfolio
                 </td>
                 <td style={{ padding: '6px 8px' }}>{formatMoney(t.monto_invertido, currency)}</td>
                 <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>
-                  {t.status === 'abierta' ? 'Abierta' : t.status === 'cerrada_por_stop' ? 'Cerrada · stop' : 'Cerrada · normal'}
+                  {t.status === 'abierta' ? 'Abierta'
+                    : t.status === 'cerrada_por_stop' ? 'Cerrada · stop'
+                    : t.status === 'cerrada_por_take_profit' ? 'Cerrada · take-profit'
+                    : 'Cerrada · normal'}
                 </td>
                 <td style={{ padding: '6px 8px', color: t.pnl_pct == null ? 'var(--text-hint)' : t.pnl_pct >= 0 ? 'var(--up)' : 'var(--down)' }}>
                   {t.pnl_pct == null ? '—' : `${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%`}
@@ -633,6 +735,8 @@ export function TrackingSection() {
   const [trades, setTrades] = useState<TrackingTrade[]>([])
   const [movements, setMovements] = useState<TrackingCapitalMovement[]>([])
   const [loading, setLoading] = useState(true)
+  const [confirmingReset, setConfirmingReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -648,6 +752,18 @@ export function TrackingSection() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Backlog post-21, a pedido explícito del usuario: "borrar todo" = el historial de operaciones
+  // ejecutadas (tracking_trades), para empezar de cero. No toca portfolios (capital/costo
+  // configurado) ni fondeos/retiros — ver DELETE /api/tracking/trades.
+  async function handleResetAll() {
+    if (!confirmingReset) { setConfirmingReset(true); return }
+    setResetting(true)
+    const res = await fetchJson('/api/tracking/trades', { method: 'DELETE' })
+    setResetting(false)
+    setConfirmingReset(false)
+    if (res.ok) setTrades([])
+  }
 
   if (loading) return <p style={{ fontSize: 13, color: 'var(--text-hint)' }}>Cargando...</p>
 
@@ -671,7 +787,34 @@ export function TrackingSection() {
       <LoadTradeForm portfolios={portfolios} onCreated={t => setTrades(prev => [t, ...prev])} />
 
       <div style={card}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Operaciones</div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Rendimiento histórico</div>
+        <TradeStats trades={trades} />
+      </div>
+
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Operaciones</div>
+          {trades.length > 0 && (
+            confirmingReset ? (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: 11, color: 'var(--down)' }}>¿Borrar las {trades.length} operaciones? No se puede deshacer.</span>
+                <button onClick={handleResetAll} disabled={resetting}
+                  style={{ ...btn, background: 'var(--down)', color: '#fff', padding: '5px 10px', fontSize: 11 }}>
+                  {resetting ? 'Borrando...' : 'Confirmar'}
+                </button>
+                <button onClick={() => setConfirmingReset(false)}
+                  style={{ ...btn, background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)', padding: '5px 10px', fontSize: 11 }}>
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <button onClick={handleResetAll}
+                style={{ ...btn, background: 'transparent', color: 'var(--text-hint)', border: '1px solid var(--border)', padding: '5px 10px', fontSize: 11 }}>
+                Borrar todo el historial
+              </button>
+            )
+          )}
+        </div>
         <TradesList trades={trades} portfolios={portfolios} />
       </div>
     </div>

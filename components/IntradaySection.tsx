@@ -6,10 +6,33 @@ import { InfoTip } from './InfoTip'
 import { bolsaKey, type ScorecardBolsa } from '@/lib/scorecard'
 import { classifyCosto, type CostoConfig, type Currency } from '@/lib/tracking'
 import { useCostoConfig } from '@/lib/useCostoConfig'
+import { fetchClosedPaginated } from '@/lib/closedPredictions'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const ANON_KEY     = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const supabase     = createBrowserClient(SUPABASE_URL, ANON_KEY)
+
+// Fix de un bug real (a pedido del usuario, 30/07/2026): la pestaña "Análisis" filtraba por
+// período (hoy/3d/7d/14d/todo) del lado del cliente sobre un `.limit(500)` fijo ordenado por más
+// reciente — con el volumen real de intradiario (62.589 filas cerradas en 14 días reales, medido
+// en Supabase) esos 500 registros cubren apenas unas horas, así que "14 días" en realidad
+// mostraba una ventana de horas mal etiquetada. Distinto del bug de Etapa 16 (que era sólo un
+// `.limit` insuficiente para diario) — acá ni paginar todo es viable (63+ pedidos de 1000 filas
+// sólo para las predicciones, sin contar `model_predictions_intraday`), así que la query ahora
+// SÍ filtra por fecha real en el servidor (antes no filtraba nada, sólo tomaba lo más reciente) y
+// se paginan hasta este techo, con aviso visible si se trunca — mismo principio que
+// `MAX_ROWS_DAILY` en `lib/closedPredictions.ts`, sin escalar a una función SQL de agregados
+// (como hizo Backlog post-16 para "¿Funciona?") porque acá se necesitan filas crudas para los
+// desgloses por modelo/sesión/ticker.
+const MAX_ROWS_INTRADAY_ANALYSIS = 15000
+
+function sinceForAnalysisPeriod(period: 'today' | '3d' | '7d' | '14d' | 'all'): string | null {
+  if (period === 'all') return null
+  const now = new Date()
+  if (period === 'today') return now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
+  const days = period === '3d' ? 3 : period === '7d' ? 7 : 14
+  return new Date(now.getTime() - days * 86400000).toISOString()
+}
 const PAGE_SIZE    = 25
 
 async function callFn(slug: string, body: object): Promise<any> {
@@ -1077,7 +1100,6 @@ function LRResultsPanel({ params }: { params: LRParam[] }) {
 export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsas?: Record<string, ScorecardBolsa> }) {
   const [open, setOpen]           = useState<IntraConsensus[]>([])
   const [closed, setClosed]       = useState<IntraConsensus[]>([])
-  const [modelPreds, setModelPreds] = useState<ModelPred[]>([])
   const [modelWeights, setModelWeights] = useState<ModelWeightIntraday[]>([])
   const [loading, setLoading]     = useState(true)
   const [triggering, setTriggering] = useState(false)
@@ -1093,6 +1115,10 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
   const [lrProgress, setLRProgress]         = useState<{ done: number; total: number; phase: string; eta: number | null }>({ done: 0, total: 0, phase: '', eta: null })
   const [lrParams, setLRParams]             = useState<LRParam[]>([])
   const [sessionStats, setSessionStats]     = useState<SessionModelStat[]>([])
+  const [analysisClosedPreds, setAnalysisClosedPreds] = useState<IntraConsensus[]>([])
+  const [analysisModelPreds, setAnalysisModelPreds]   = useState<ModelPred[]>([])
+  const [analysisLoading, setAnalysisLoading]         = useState(false)
+  const [analysisTruncated, setAnalysisTruncated]     = useState(false)
   const marketOpen = isMarketOpen()
   const { costoConfig } = useCostoConfig()
 
@@ -1115,12 +1141,11 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
     setLastRefresh(new Date()); setLoading(false)
   }, [])
 
-  // Heavy load: individual model preds + LR params — only fetched when analysis/modelos tab is open
+  // Heavy load: LR params + stats por sesión — only fetched when analysis/modelos tab is open.
+  // `model_predictions_intraday` se sacó de acá (30/07/2026, fix del bug de "Análisis" de más
+  // abajo) — ahora lo trae `loadAnalysis`, con filtro de fecha real y paginado.
   const loadHeavy = useCallback(async () => {
-    const [{ data: mpData }, { data: lrData }, { data: sessData }] = await Promise.all([
-      supabase.from('model_predictions_intraday')
-        .select('model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, final_pct_predicted, price_at_creation, actual_price, assets!asset_id(ticker)')
-        .eq('status','closed').not('direction_correct','is',null).limit(1000),
+    const [{ data: lrData }, { data: sessData }] = await Promise.all([
       supabase.from('model_learned_params_intraday')
         .select('model_name, horizon_minutes, train_samples, train_accuracy, coefficients, feature_names, last_updated, signed_r2, avg_actual_mag')
         .order('model_name'),
@@ -1128,9 +1153,37 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
         .select('model_name, horizon_minutes, market_session, lgbm_val_mae, error_p75, error_p90, train_samples')
         .order('horizon_minutes'),
     ])
-    setModelPreds((mpData ?? []) as unknown as ModelPred[])
     setLRParams((lrData ?? []) as LRParam[])
     setSessionStats((sessData ?? []) as SessionModelStat[])
+  }, [])
+
+  // Fix real (30/07/2026): antes esto filtraba client-side sobre un `.limit(500)` fijo (últimas
+  // cerradas, sin importar la fecha) — con 60k+ filas cerradas cada 14 días, "14 días" en el
+  // selector mostraba en la práctica unas horas. Ahora la query filtra por fecha real en el
+  // servidor y pagina hasta MAX_ROWS_INTRADAY_ANALYSIS, con `analysisTruncated` visible si hay
+  // más filas en el rango de las que se muestran (no lo escondemos).
+  const loadAnalysis = useCallback(async (period: 'today' | '3d' | '7d' | '14d' | 'all') => {
+    setAnalysisLoading(true)
+    const since = sinceForAnalysisPeriod(period)
+    const [preds, models] = await Promise.all([
+      fetchClosedPaginated(supabase, {
+        table: 'consensus_predictions_intraday', dateCol: 'closed_at',
+        select: 'id, asset_id, direction, confidence, agreement_pct, horizon_minutes, target_time, price_at_creation, final_pct_predicted, models_bullish, models_bearish, models_neutral, models_total, status, actual_pct, direction_correct, closed_at, created_at, stop_loss_pct, assets(ticker, name, currency)',
+        since, maxRows: MAX_ROWS_INTRADAY_ANALYSIS,
+      }),
+      fetchClosedPaginated(supabase, {
+        table: 'model_predictions_intraday', dateCol: 'created_at',
+        select: 'model_name, direction, direction_correct, confidence, horizon_minutes, mae, created_at, final_pct_predicted, price_at_creation, actual_price, assets!asset_id(ticker)',
+        since, maxRows: MAX_ROWS_INTRADAY_ANALYSIS,
+      }),
+    ])
+    setAnalysisClosedPreds(preds.rows as unknown as IntraConsensus[])
+    // model_predictions_intraday sin direction_correct son filas sin cerrar del todo — el
+    // desglose por modelo de IntradayAnalysis ya las salta, filtrarlas acá es sólo para no
+    // arrastrar filas inútiles en el estado.
+    setAnalysisModelPreds((models.rows as unknown as ModelPred[]).filter(p => p.direction_correct != null))
+    setAnalysisTruncated(preds.truncated || models.truncated)
+    setAnalysisLoading(false)
   }, [])
 
   // Poll light data every 2 minutes, but only while the tab is visible and the market is open —
@@ -1145,34 +1198,8 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [loadLight])
   useEffect(() => { if (tab === 'analysis' || tab === 'modelos') loadHeavy() }, [tab, loadHeavy])
+  useEffect(() => { if (tab === 'analysis') loadAnalysis(analysisPeriod) }, [tab, analysisPeriod, loadAnalysis])
   useEffect(() => setPage(0), [filters, tab])
-
-  // Filtered data for analysis tab based on selected period
-  const analysisClosedPreds = useMemo(() => {
-    if (analysisPeriod === 'all') return closed
-    const now = new Date()
-    let since: string
-    if (analysisPeriod === 'today') {
-      since = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
-    } else {
-      const days = analysisPeriod === '3d' ? 3 : analysisPeriod === '7d' ? 7 : 14
-      since = new Date(now.getTime() - days * 86400000).toISOString()
-    }
-    return closed.filter(p => (p.closed_at ?? p.created_at) >= since)
-  }, [closed, analysisPeriod])
-
-  const analysisModelPreds = useMemo(() => {
-    if (analysisPeriod === 'all') return modelPreds
-    const now = new Date()
-    let since: string
-    if (analysisPeriod === 'today') {
-      since = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
-    } else {
-      const days = analysisPeriod === '3d' ? 3 : analysisPeriod === '7d' ? 7 : 14
-      since = new Date(now.getTime() - days * 86400000).toISOString()
-    }
-    return modelPreds.filter(p => p.created_at >= since)
-  }, [modelPreds, analysisPeriod])
 
   async function recalcWeights() {
     setRecalculating(true)
@@ -1360,9 +1387,19 @@ export function IntradaySectionClient({ scorecardBolsas = {} }: { scorecardBolsa
                   </button>
                 ))}
                 <span style={{ fontSize:11, color:'var(--text-hint)', marginLeft:4 }}>
-                  {analysisClosedPreds.filter(p => p.direction_correct != null).length} cerradas
+                  {analysisLoading ? 'cargando…' : `${analysisClosedPreds.filter(p => p.direction_correct != null).length} cerradas`}
                 </span>
               </div>
+              {analysisTruncated && !analysisLoading && (
+                <div style={{
+                  background:'#f59e0b18', border:'1px solid #f59e0b55', borderRadius:8,
+                  padding:'8px 12px', fontSize:11, color:'#f59e0b',
+                }}>
+                  ⚠ Hay más de {MAX_ROWS_INTRADAY_ANALYSIS.toLocaleString('es-AR')} predicciones cerradas en este
+                  período — se muestran sólo las más recientes hasta ese techo (volumen de intradiario, ver
+                  REDISENO/STATUS.md). Para un período con menos volumen (ej. "Hoy"/"3 días") no debería truncarse.
+                </div>
+              )}
               <IntradayAnalysis closedPreds={analysisClosedPreds} modelPreds={analysisModelPreds} />
 
               {/* LR vs observed accuracy comparison */}

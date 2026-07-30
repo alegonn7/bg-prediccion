@@ -40,7 +40,7 @@ export function sinceFor(range: ClosedRange, dateCol: 'target_date' | 'closed_at
  */
 export async function fetchClosedPaginated(
   supabase: SupabaseClient,
-  opts: { table: string; dateCol: 'target_date' | 'closed_at'; select: string; since: string | null; maxRows: number }
+  opts: { table: string; dateCol: 'target_date' | 'closed_at' | 'created_at'; select: string; since: string | null; maxRows: number }
 ): Promise<{ rows: Record<string, unknown>[]; truncated: boolean }> {
   const { table, dateCol, select, since, maxRows } = opts
   const rows: Record<string, unknown>[] = []
