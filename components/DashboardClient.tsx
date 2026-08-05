@@ -10,11 +10,12 @@ import { ModelAnalysisSection } from './ModelAnalysis'
 import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
 import { CedearDualSection } from './CedearDualSection'
+import { AccionArgDualSection } from './AccionArgDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
 import { TrackingSection } from './TrackingSection'
-import type { ChangelogEntry, DailyModelParam, CedearPair, CclInfo } from '@/app/page'
+import type { ChangelogEntry, DailyModelParam, CedearPair, AccionArgPair, CclInfo } from '@/app/page'
 import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
@@ -41,13 +42,14 @@ type Props = {
   scorecardBolsas: Record<string, ScorecardBolsa>
   confidenceCalibration: Record<string, CalibrationBin[]>
   cedearPairs: CedearPair[]
+  accionArgPairs: AccionArgPair[]
   ccl: CclInfo
 }
 
 export function DashboardClient({
   open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog,
-  scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
+  scorecardBolsas, confidenceCalibration, cedearPairs, accionArgPairs, ccl,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -125,6 +127,7 @@ export function DashboardClient({
         {active === 'argentina'     && (
           <>
             <CedearDualSection pairs={cedearPairs} ccl={ccl} openPredictions={open} scorecardBolsas={scorecardBolsas} />
+            <AccionArgDualSection pairs={accionArgPairs} openPredictions={open} scorecardBolsas={scorecardBolsas} />
             <ArgentinaSectionClient />
           </>
         )}

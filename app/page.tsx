@@ -43,6 +43,18 @@ export type CedearPair = {
 
 export type CclInfo = { venta: number; compra: number | null; fecha: string } | null
 
+// Etapa 23: pares acción argentina local (ars) <-> ADR (usd) — mismo espíritu que CedearPair
+// pero sin ratio/CCL: son dos cotizaciones directas del mismo mercado/instrumento subyacente,
+// no una reconstrucción sintética, así que no hay "precio implícito" que calcular.
+export type AccionArgPair = {
+  localAssetId: string
+  localTicker: string
+  adrAssetId: string
+  adrTicker: string
+  localPriceArs: number | null
+  adrPriceUsd: number | null
+}
+
 export type DailyModelParam = {
   horizon_bucket: number
   lgbm_val_mae: number | null
@@ -177,10 +189,17 @@ async function getData() {
     .map((c: any) => ({ cedear: c, underlying: c.underlying_ticker ? assetsByTicker[c.underlying_ticker] : null }))
     .filter((p: any) => p.underlying)
 
-  // Attach current prices to open predictions (+ a los pares CEDEAR/subyacente de arriba)
+  // Etapa 23: pares acción argentina local (ars) <-> ADR (usd) — GGAL.BA/GGAL, YPFD.BA/YPF, etc.
+  const accionArgAssets = (allAssets ?? []).filter((a: any) => a.core_bucket === 'accion_arg_local')
+  const accionArgPairsBase = accionArgAssets
+    .map((c: any) => ({ local: c, adr: c.underlying_ticker ? assetsByTicker[c.underlying_ticker] : null }))
+    .filter((p: any) => p.adr)
+
+  // Attach current prices to open predictions (+ a los pares CEDEAR/subyacente y acción/ADR de arriba)
   const assetIds = [...new Set([
     ...(open ?? []).map((p: any) => p.asset_id),
     ...cedearPairsBase.flatMap((p: any) => [p.cedear.id, p.underlying.id]),
+    ...accionArgPairsBase.flatMap((p: any) => [p.local.id, p.adr.id]),
   ])]
   let priceMap: Record<string, number> = {}
   if (assetIds.length > 0) {
@@ -220,6 +239,16 @@ async function getData() {
       gapPct,
     }
   })
+
+  // Etapa 23: sin ratio/CCL — dos cotizaciones directas (local ARS, ADR USD), no una reconstrucción.
+  const accionArgPairs: AccionArgPair[] = accionArgPairsBase.map((p: any) => ({
+    localAssetId: p.local.id,
+    localTicker: p.local.ticker as string,
+    adrAssetId: p.adr.id,
+    adrTicker: p.adr.ticker as string,
+    localPriceArs: priceMap[p.local.id] ?? null,
+    adrPriceUsd: priceMap[p.adr.id] ?? null,
+  }))
 
   const openWithPrices = (open ?? []).map((p: any) => ({
     ...p,
@@ -299,6 +328,7 @@ async function getData() {
     backtestModelStats,
     changelog: (changelogRaw ?? []) as ChangelogEntry[],
     cedearPairs,
+    accionArgPairs,
     ccl: latestCcl ? { venta: Number(latestCcl.venta), compra: latestCcl.compra != null ? Number(latestCcl.compra) : null, fecha: latestCcl.fecha as string } : null,
   }
 }
@@ -311,7 +341,7 @@ export default async function Dashboard() {
     openPredsSummary, dailyModelParams,
     backtestRuns, horizonWeights,
     modelLRParams, backtestModelStats, changelog,
-    scorecardBolsas, confidenceCalibration, cedearPairs, ccl,
+    scorecardBolsas, confidenceCalibration, cedearPairs, accionArgPairs, ccl,
   } = await getData()
   return (
     <DashboardClient
@@ -333,6 +363,7 @@ export default async function Dashboard() {
       scorecardBolsas={scorecardBolsas}
       confidenceCalibration={confidenceCalibration}
       cedearPairs={cedearPairs}
+      accionArgPairs={accionArgPairs}
       ccl={ccl}
     />
   )
