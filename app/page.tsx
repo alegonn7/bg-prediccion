@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase-server'
 import { DashboardClient } from '@/components/DashboardClient'
 import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
 import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection'
-import { bolsaKey, calibKey, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
+import { bolsaKey, calibKey, SCORECARD_BOLSA_SELECT, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
 import { fetchClosedPaginated, DAILY_CLOSED_SELECT, MAX_ROWS_DAILY } from '@/lib/closedPredictions'
 import { fetchIntradayScorecardStats, type IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
@@ -158,9 +158,11 @@ async function getData() {
       .order('snapshot_at', { ascending: false })
       .limit(200),
 
+    // Etapa 27.5: las columnas de esperanza (payoff, expectancy, captura) viajan acá. El select
+    // vive en lib/scorecard.ts junto al tipo para que agregar una métrica sea un solo cambio.
     supabase
       .from('scorecard_bolsas')
-      .select('asset_id, currency, horizon_bucket, horizon_unit, n_closed, n_correct, baseline_rate, baseline_n, mcnemar_n10, mcnemar_n01, p_value, estado, last_updated'),
+      .select(SCORECARD_BOLSA_SELECT),
 
     supabase
       .from('confidence_calibration')
@@ -299,7 +301,9 @@ async function getData() {
   // Etapa 3: mapas de scorecard por bolsa (asset+moneda+horizonte) y curva de
   // calibración de confianza por (moneda, horizonte) — ver dashboard/lib/scorecard.ts.
   const scorecardBolsas: Record<string, ScorecardBolsa> = {}
-  for (const r of (scorecardBolsasRaw ?? []) as ScorecardBolsa[]) {
+  // El doble cast es por SCORECARD_BOLSA_SELECT: al ser una constante en runtime, supabase-js no
+  // puede inferir la forma de la fila desde el string del select como hace con un literal inline.
+  for (const r of (scorecardBolsasRaw ?? []) as unknown as ScorecardBolsa[]) {
     scorecardBolsas[bolsaKey(r.asset_id, r.currency, r.horizon_bucket, r.horizon_unit)] = r
   }
   const confidenceCalibration: Record<string, CalibrationBin[]> = {}

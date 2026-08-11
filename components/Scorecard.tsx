@@ -345,9 +345,13 @@ function TypeCard({
 // ─── Resumen del semáforo de bolsas (Etapa 3) ────────────────────────────────
 function BolsasSemaforoSummary({ scorecardBolsas }: { scorecardBolsas: Record<string, ScorecardBolsa> }) {
   const bolsas = Object.values(scorecardBolsas)
-  const counts: Record<Estado, number> = { insuficiente: 0, acumulando: 0, validado: 0, sin_edge: 0 }
+  const counts: Record<Estado, number> = {
+    insuficiente: 0, acumulando: 0, validado: 0, sin_edge: 0, contraproducente: 0,
+  }
   for (const b of bolsas) counts[b.estado]++
-  const order: Estado[] = ['validado', 'acumulando', 'sin_edge', 'insuficiente']
+  // Etapa 27.3: 'contraproducente' va inmediatamente después de 'sin_edge' porque es peor —
+  // no es "no se confirmó ventaja", es "el baseline le gana con significancia estadística".
+  const order: Estado[] = ['validado', 'acumulando', 'sin_edge', 'contraproducente', 'insuficiente']
 
   if (bolsas.length === 0) return null
 
@@ -358,7 +362,7 @@ function BolsasSemaforoSummary({ scorecardBolsas }: { scorecardBolsas: Record<st
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
         <div style={{ fontSize: 15, fontWeight: 700 }}>Semáforo por bolsa</div>
-        <InfoTip text='Una "bolsa" es un activo + moneda + horizonte específico. Cada una se evalúa contra su propio baseline empírico ("¿cuánto sube este activo, a este horizonte, en promedio?"), no contra un 50% fijo — y hace falta al menos 400 cierres para declarar "validado" o "sin edge confirmado".' />
+        <InfoTip text='Una "bolsa" es un activo + moneda + horizonte específico. Cada una se evalúa contra su propio baseline: el acierto de la mejor estrategia constante (apostar siempre a lo mismo) sobre esa misma muestra, no un 50% fijo. Hacen falta 400 cierres para un veredicto. "Contraproducente" significa que el baseline le gana al modelo de forma estadísticamente significativa — seguir la señal ahí da peor resultado que apostar siempre a lo mismo.' />
         <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-hint)', marginLeft: 'auto' }}>{bolsas.length} bolsas activas</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
