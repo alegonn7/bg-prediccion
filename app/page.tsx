@@ -1,12 +1,8 @@
 import { createClient } from '@/lib/supabase-server'
 import { DashboardClient } from '@/components/DashboardClient'
-import type { BacktestRun, HorizonWeight } from '@/components/EntrenamientoSection'
-import type { ModelLRParam, BacktestModelStat } from '@/components/ModelsSection'
 import { bolsaKey, calibKey, SCORECARD_BOLSA_SELECT, type ScorecardBolsa, type CalibrationBin } from '@/lib/scorecard'
 import { fetchClosedPaginated, DAILY_CLOSED_SELECT, MAX_ROWS_DAILY } from '@/lib/closedPredictions'
 import { fetchIntradayScorecardStats, type IntradayScorecardStats } from '@/lib/intradayScorecardStats'
-
-export type { ModelLRParam, BacktestModelStat }
 
 export type ChangelogEntry = {
   id: number
@@ -93,10 +89,6 @@ async function getData() {
     { data: modelWeights },
     { data: allAssets },
     { data: dailyModelParamsRaw },
-    { data: backtestRuns },
-    { data: horizonWeights },
-    { data: modelLRParamsRaw },
-    { data: backtestStatsRaw },
     { data: changelogRaw },
     { data: scorecardBolsasRaw },
     { data: confidenceCalibrationRaw },
@@ -131,26 +123,6 @@ async function getData() {
       .from('model_signed_params_daily')
       .select('horizon_bucket, lgbm_val_mae, val_mae_ridge, signed_r2, train_samples, avg_actual_mag, last_updated, error_p25, error_p50, error_p75, error_p90')
       .order('horizon_bucket'),
-
-    supabase
-      .from('backtest_runs')
-      .select('ticker, status, dates_processed, predictions_evaluated, error_msg, started_at, completed_at')
-      .order('ticker'),
-
-    supabase
-      .from('model_weights_horizon')
-      .select('model_name, horizon_bucket, weight, direction_accuracy, sample_size, mae_avg')
-      .order('model_name'),
-
-    supabase
-      .from('model_learned_params')
-      .select('model_name, horizon_bucket, train_samples, train_accuracy, bias, feature_names, coefficients, last_updated')
-      .order('model_name'),
-
-    supabase
-      .from('backtest_stats')
-      .select('model_name, horizon_bucket, correct_count, total_count, brier_sum, brier_count, mae_sum, mae_count')
-      .limit(500),
 
     supabase
       .from('model_changelog')
@@ -272,32 +244,6 @@ async function getData() {
     created_at: p.created_at,
   }))
 
-  // Aggregate backtest_stats by model+horizon across all tickers
-  const bsAggMap: Record<string, BacktestModelStat> = {}
-  for (const r of (backtestStatsRaw ?? [])) {
-    const key = `${r.model_name}_${r.horizon_bucket}`
-    if (!bsAggMap[key]) {
-      bsAggMap[key] = {
-        model_name: r.model_name, horizon_bucket: r.horizon_bucket,
-        correct: 0, total: 0, brier_sum: 0, brier_count: 0, mae_sum: 0, mae_count: 0,
-        pct: 0, brier_avg: 0, mae_avg: 0,
-      } as any
-    }
-    const s = bsAggMap[key] as any
-    s.correct    += r.correct_count ?? 0
-    s.total      += r.total_count ?? 0
-    s.brier_sum  += r.brier_sum ?? 0
-    s.brier_count+= r.brier_count ?? 0
-    s.mae_sum    += r.mae_sum ?? 0
-    s.mae_count  += r.mae_count ?? 0
-  }
-  const backtestModelStats: BacktestModelStat[] = Object.values(bsAggMap).map((s: any) => ({
-    ...s,
-    pct:       s.total       > 0 ? s.correct    / s.total       : 0,
-    brier_avg: s.brier_count > 0 ? s.brier_sum  / s.brier_count : 0,
-    mae_avg:   s.mae_count   > 0 ? s.mae_sum    / s.mae_count   : 0,
-  }))
-
   // Etapa 3: mapas de scorecard por bolsa (asset+moneda+horizonte) y curva de
   // calibración de confianza por (moneda, horizonte) — ver dashboard/lib/scorecard.ts.
   const scorecardBolsas: Record<string, ScorecardBolsa> = {}
@@ -326,10 +272,6 @@ async function getData() {
     assets: allAssets ?? [],
     openPredsSummary,
     dailyModelParams: (dailyModelParamsRaw ?? []) as DailyModelParam[],
-    backtestRuns: (backtestRuns ?? []) as BacktestRun[],
-    horizonWeights: (horizonWeights ?? []) as HorizonWeight[],
-    modelLRParams: (modelLRParamsRaw ?? []) as ModelLRParam[],
-    backtestModelStats,
     changelog: (changelogRaw ?? []) as ChangelogEntry[],
     cedearPairs,
     accionArgPairs,
@@ -342,9 +284,7 @@ export const revalidate = 600
 export default async function Dashboard() {
   const {
     open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets,
-    openPredsSummary, dailyModelParams,
-    backtestRuns, horizonWeights,
-    modelLRParams, backtestModelStats, changelog,
+    openPredsSummary, dailyModelParams, changelog,
     scorecardBolsas, confidenceCalibration, cedearPairs, accionArgPairs, ccl,
   } = await getData()
   return (
@@ -359,10 +299,6 @@ export default async function Dashboard() {
       assets={assets}
       openPredsSummary={openPredsSummary}
       dailyModelParams={dailyModelParams}
-      backtestRuns={backtestRuns}
-      horizonWeights={horizonWeights}
-      modelLRParams={modelLRParams}
-      backtestModelStats={backtestModelStats}
       changelog={changelog}
       scorecardBolsas={scorecardBolsas}
       confidenceCalibration={confidenceCalibration}

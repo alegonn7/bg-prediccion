@@ -3,27 +3,6 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import type { DailyModelParam } from '@/app/page'
 
-export type ModelLRParam = {
-  model_name: string
-  horizon_bucket: number
-  train_samples: number
-  train_accuracy: number
-  bias: number
-  feature_names: string[]
-  coefficients: number[]
-  last_updated: string
-}
-
-export type BacktestModelStat = {
-  model_name: string
-  horizon_bucket: number
-  correct: number
-  total: number
-  pct: number
-  brier_avg: number
-  mae_avg: number
-}
-
 type IntradayLRParam = {
   model_name: string
   horizon_minutes: number
@@ -121,16 +100,13 @@ function StatTable({
 }
 
 function VoteCard({
-  meta, dailyParams, intradayParams, legacyLR, legacyBT, tab,
+  meta, dailyParams, intradayParams, tab,
 }: {
   meta: VoteMeta
   dailyParams: DailyModelParam[]
   intradayParams: IntradayLRParam[]
-  legacyLR: ModelLRParam[]
-  legacyBT: BacktestModelStat[]
   tab: 'diarios' | 'intradiarios'
 }) {
-  const [expanded, setExpanded] = useState(false)
 
   const dailyRows = tab === 'diarios' ? DAILY_BUCKETS.map(b => {
     const p = dailyParams.find(d => d.horizon_bucket === b)
@@ -165,17 +141,6 @@ function VoteCard({
 
   const hasRealStats = dailyRows.length > 0 || intraRows.length > 0
 
-  // Compatibilidad hacia atrás: si en el futuro se reentrena un modelo lineal por-voto bajo
-  // este nombre (hoy backtest-asset/backtest-compute-weights sólo conocen los 16 nombres
-  // viejos, no se tocaron en esta etapa), mostrar sus coeficientes emparejados por el
-  // feature_names REAL de cada fila — nunca por posición contra una lista hardcodeada
-  // (ese era el bug de índice de la versión anterior de esta vista).
-  const legacyByBucket: Record<number, ModelLRParam> = {}
-  for (const lr of legacyLR) if (lr.model_name === meta.name) legacyByBucket[lr.horizon_bucket] = lr
-  const legacyBuckets = Object.keys(legacyByBucket).map(Number).sort((a, b) => a - b)
-  const legacyBTByBucket: Record<number, BacktestModelStat> = {}
-  for (const bt of legacyBT) if (bt.model_name === meta.name) legacyBTByBucket[bt.horizon_bucket] = bt
-
   return (
     <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
       <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border)' }}>
@@ -194,7 +159,7 @@ function VoteCard({
       </div>
 
       {hasRealStats && (
-        <div style={{ padding: '14px 20px', borderBottom: legacyBuckets.length ? '1px solid var(--border)' : 'none' }}>
+        <div style={{ padding: '14px 20px' }}>
           <div style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-hint)', marginBottom: 8 }}>
             Rendimiento real por horizonte
           </div>
@@ -211,91 +176,15 @@ function VoteCard({
             : 'Sin métricas de error — este voto no tiene coeficientes entrenados, es una fórmula fija.'}
         </div>
       )}
-
-      {legacyBuckets.length > 0 && (
-        <>
-          <button
-            onClick={() => setExpanded(e => !e)}
-            style={{
-              width: '100%', padding: '10px 20px', background: 'none', border: 'none',
-              borderBottom: expanded ? '1px solid var(--border)' : 'none',
-              color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer', textAlign: 'left',
-              display: 'flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <span style={{ fontSize: 10 }}>{expanded ? '▲' : '▼'}</span>
-            {expanded ? 'Ocultar coeficientes de backtest' : 'Ver coeficientes de backtest histórico (nombre legado)'}
-          </button>
-          {expanded && (
-            <div style={{ padding: '16px 20px' }}>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                      <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--text-hint)', fontWeight: 500, minWidth: 110 }}>Variable</th>
-                      {legacyBuckets.map(b => (
-                        <th key={b} style={{ textAlign: 'center', padding: '6px 8px', color: 'var(--text-hint)', fontWeight: 500, minWidth: 90 }}>{b}d</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-                      <td style={{ padding: '5px 8px', color: 'var(--text-hint)', fontStyle: 'italic' }}>bias (intercept)</td>
-                      {legacyBuckets.map(b => (
-                        <td key={b} style={{ padding: '5px 8px', textAlign: 'center', fontFamily: MONO, color: legacyByBucket[b].bias >= 0 ? '#22c55e' : '#ef4444' }}>
-                          {legacyByBucket[b].bias > 0 ? '+' : ''}{legacyByBucket[b].bias.toFixed(3)}
-                        </td>
-                      ))}
-                    </tr>
-                    {/* Emparejado SIEMPRE por feature_names de la fila real, nunca por índice fijo */}
-                    {(legacyByBucket[legacyBuckets[0]]?.feature_names ?? []).map((fname, fi) => (
-                      <tr key={fname} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontFamily: MONO }}>{fname}</td>
-                        {legacyBuckets.map(b => {
-                          const lr = legacyByBucket[b]
-                          const idx = lr.feature_names.indexOf(fname)
-                          const c = idx >= 0 ? lr.coefficients[idx] : null
-                          return (
-                            <td key={b} style={{ padding: '5px 8px', textAlign: 'center', fontFamily: MONO, fontSize: 10, fontWeight: 600, color: c == null ? 'var(--text-hint)' : c >= 0 ? '#22c55e' : '#f87171' }}>
-                              {c != null ? `${c > 0 ? '+' : ''}${c.toFixed(3)}` : '—'}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    ))}
-                    <tr>
-                      <td style={{ padding: '5px 8px', color: 'var(--text-hint)', fontSize: 10 }}>Muestras / Acc. (train)</td>
-                      {legacyBuckets.map(b => {
-                        const lr = legacyByBucket[b]
-                        const bt = legacyBTByBucket[b]
-                        return (
-                          <td key={b} style={{ padding: '5px 8px', textAlign: 'center', fontSize: 10 }}>
-                            <div style={{ color: 'var(--text-muted)' }}>{lr.train_samples.toLocaleString()}</div>
-                            <div style={{ color: 'var(--text-hint)' }}>
-                              {(lr.train_accuracy * 100).toFixed(1)}%{bt ? ` · BT ${(bt.pct * 100).toFixed(1)}%` : ''}
-                            </div>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </>
-      )}
     </div>
   )
 }
 
 type Props = {
-  modelLRParams: ModelLRParam[]
-  backtestModelStats: BacktestModelStat[]
   dailyModelParams?: DailyModelParam[]
 }
 
-export function ModelosSection({ modelLRParams, backtestModelStats, dailyModelParams = [] }: Props) {
+export function ModelosSection({ dailyModelParams = [] }: Props) {
   const [subTab, setSubTab] = useState<'diarios' | 'intradiarios'>('diarios')
   const [intradayParams, setIntradayParams] = useState<IntradayLRParam[] | null>(null)
   const [loadingIntraday, setLoadingIntraday] = useState(false)
@@ -355,8 +244,6 @@ export function ModelosSection({ modelLRParams, backtestModelStats, dailyModelPa
             meta={meta}
             dailyParams={dailyModelParams}
             intradayParams={intradayParams ?? []}
-            legacyLR={modelLRParams}
-            legacyBT={backtestModelStats}
             tab={subTab}
           />
         ))}

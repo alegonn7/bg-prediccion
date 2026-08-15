@@ -1,32 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
-import type { BacktestModelStat } from './ModelsSection'
 import type { ChangelogEntry, DailyModelParam } from '@/app/page'
 
-export type BacktestRun = {
-  ticker: string
-  status: 'pending' | 'running' | 'done' | 'error'
-  dates_processed: number | null
-  predictions_evaluated: number | null
-  error_msg: string | null
-  started_at: string | null
-  completed_at: string | null
-}
-
-export type HorizonWeight = {
-  model_name: string
-  horizon_bucket: number
-  weight: number
-  direction_accuracy: number | null
-  sample_size: number
-  mae_avg: number | null
-}
-
 type Props = {
-  runs: BacktestRun[]
-  horizonWeights: HorizonWeight[]
-  globalWeights: { model_name: string; weight: number; direction_accuracy: number | null; sample_size: number }[]
-  backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
   dailyModelParams: DailyModelParam[]
 }
@@ -114,7 +90,7 @@ export function ErrorBadge({
 type JobState = 'idle' | 'running' | 'done' | 'error'
 
 export function EntrenamientoSection({
-  runs, horizonWeights, globalWeights, backtestModelStats, changelog, dailyModelParams,
+  changelog, dailyModelParams,
 }: Props) {
   // Daily D2 state
   const [dailyState, setDailyState] = useState<JobState>('idle')
@@ -126,15 +102,7 @@ export function EntrenamientoSection({
   const [intraMsg,   setIntraMsg]   = useState('')
   const [intraJobId, setIntraJobId] = useState<string | null>(null)
 
-  // Advanced state
-  const [lrState,      setLrState]      = useState<JobState>('idle')
-  const [lrMsg,        setLrMsg]        = useState('')
-  const [federState,   setFederState]   = useState<JobState>('idle')
-  const [federMsg,     setFederMsg]     = useState('')
-
   // UI toggles
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [showActivos,  setShowActivos]  = useState(false)
   const [showHistory,  setShowHistory]  = useState(false)
 
   const anyRunning = dailyState === 'running' || intraState === 'running'
@@ -203,23 +171,6 @@ export function EntrenamientoSection({
     } catch { setIntraState('error'); setIntraMsg('Error de conexión') }
   }
 
-  async function runLR() {
-    setLrState('running'); setLrMsg('')
-    try {
-      const j = await fetch('/api/backtest/trigger?all=true&force=true', { method: 'POST' }).then(r => r.json())
-      setLrMsg(`${j.triggered ?? 0} activos en cola · corre en segundo plano`)
-    } catch { setLrState('error'); setLrMsg('Error de conexión') }
-  }
-
-  async function federate() {
-    setFederState('running'); setFederMsg('')
-    try {
-      const j = await fetch('/api/backtest/federate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trigger: 'manual' }) }).then(r => r.json())
-      if (j.ok) { setFederState('done'); setFederMsg(`${j.model_lr_upserted ?? 0} modelos LR · ${j.weights_upserted ?? 0} pesos`) }
-      else { setFederState('error'); setFederMsg(j.error ?? 'Error') }
-    } catch { setFederState('error'); setFederMsg('Error de conexión') }
-  }
-
   function btnStyle(state: JobState, disabled: boolean): React.CSSProperties {
     return {
       padding: '7px 18px', fontSize: 11, fontWeight: 600, flexShrink: 0,
@@ -237,8 +188,6 @@ export function EntrenamientoSection({
     return defaultLabel
   }
 
-  const done  = runs.filter(r => r.status === 'done').length
-  const total = runs.length
   const recentChanges = changelog.filter(c => c.trigger !== 'initial').slice(0, 40)
 
   return (
@@ -359,97 +308,6 @@ export function EntrenamientoSection({
           </button>
         </div>
       </Card>
-
-      {/* ── Avanzado ── */}
-      <button
-        onClick={() => setShowAdvanced(s => !s)}
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 20px', background: 'var(--card)', border: '1px solid var(--border)',
-          borderRadius: 10, cursor: 'pointer', width: '100%', textAlign: 'left',
-        }}
-      >
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>Avanzado — backtest LR por activo + federación de pesos</span>
-        <span style={{ fontSize: 11, color: 'var(--text-hint)' }}>{showAdvanced ? '▲' : '▼'}</span>
-      </button>
-
-      {showAdvanced && (
-        <Card>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* LR por activo */}
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3 }}>LR por activo</div>
-                <div style={{ fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.4 }}>
-                  Walk-forward backtest · 16 modelos × 5 horizontes por activo · {done}/{total} completados
-                </div>
-                {lrMsg && <div style={{ fontSize: 11, color: '#f59e0b', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", marginTop: 5 }}>{lrMsg}</div>}
-                {total > 0 && (
-                  <div style={{ marginTop: 7, height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${Math.round(done / total * 100)}%`, background: '#22c55e' }} />
-                  </div>
-                )}
-              </div>
-              <button onClick={runLR} disabled={anyRunning} style={btnStyle(lrState, anyRunning)}>
-                {btnLabel(lrState, 'Ejecutar')}
-              </button>
-            </div>
-
-            {/* Federar */}
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3 }}>Federar pesos</div>
-                <div style={{ fontSize: 11, color: 'var(--text-hint)', lineHeight: 1.4 }}>
-                  Promedia parámetros de todos los activos → modelo global · recalcula pesos de los 16 modelos
-                </div>
-                {federMsg && <div style={{ fontSize: 11, color: federState === 'done' ? '#22c55e' : '#f59e0b', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", marginTop: 5 }}>{federMsg}</div>}
-              </div>
-              <button onClick={federate} disabled={anyRunning} style={btnStyle(federState, anyRunning)}>
-                {btnLabel(federState, 'Federar')}
-              </button>
-            </div>
-          </div>
-
-          {/* Activos table */}
-          {total > 0 && (
-            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-              <button onClick={() => setShowActivos(s => !s)} style={{ fontSize: 11, color: 'var(--text-hint)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                {showActivos ? '▲ Ocultar activos' : `▼ Ver activos (${done}/${total} completados)`}
-              </button>
-              {showActivos && (
-                <div style={{ marginTop: 10, overflowX: 'auto', maxHeight: 260, overflowY: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead style={{ position: 'sticky', top: 0, background: 'var(--card)' }}>
-                      <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                        {['Ticker', 'Estado', 'Fechas', 'Evaluaciones'].map(h => (
-                          <th key={h} style={{ textAlign: 'left', padding: '5px 10px', color: 'var(--text-hint)', fontWeight: 500 }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...runs].sort((a, b) => {
-                        const o: Record<string, number> = { error: 0, running: 1, pending: 2, done: 3 }
-                        return (o[a.status] ?? 9) - (o[b.status] ?? 9)
-                      }).map(r => (
-                        <tr key={r.ticker} style={{ borderBottom: '1px solid var(--border)' }}>
-                          <td style={{ padding: '4px 10px', fontWeight: 700, fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 11 }}>{r.ticker}</td>
-                          <td style={{ padding: '4px 10px' }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: { done: '#22c55e', running: '#f59e0b', pending: '#6b7280', error: '#ef4444' }[r.status] }}>
-                              {r.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '4px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 11 }}>{r.dates_processed?.toLocaleString() ?? '—'}</td>
-                          <td style={{ padding: '4px 10px', color: 'var(--text-muted)', fontFamily: "var(--font-mono, 'IBM Plex Mono', monospace)", fontSize: 11 }}>{r.predictions_evaluated?.toLocaleString() ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-      )}
 
       {/* ── Historial de cambios ── */}
       {recentChanges.length > 0 && (

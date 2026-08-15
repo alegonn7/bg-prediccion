@@ -16,8 +16,6 @@ import { EntrenamientoSection } from './EntrenamientoSection'
 import { ModelosSection } from './ModelsSection'
 import { TrackingSection } from './TrackingSection'
 import type { ChangelogEntry, DailyModelParam, CedearPair, AccionArgPair, CclInfo } from '@/app/page'
-import type { BacktestRun, HorizonWeight } from './EntrenamientoSection'
-import type { ModelLRParam, BacktestModelStat } from './ModelsSection'
 import type { ScorecardBolsa, CalibrationBin } from '@/lib/scorecard'
 import type { IntradayScorecardStats } from '@/lib/intradayScorecardStats'
 
@@ -34,10 +32,6 @@ type Props = {
   assets: any[]
   openPredsSummary: any[]
   dailyModelParams: DailyModelParam[]
-  backtestRuns: BacktestRun[]
-  horizonWeights: HorizonWeight[]
-  modelLRParams: ModelLRParam[]
-  backtestModelStats: BacktestModelStat[]
   changelog: ChangelogEntry[]
   scorecardBolsas: Record<string, ScorecardBolsa>
   confidenceCalibration: Record<string, CalibrationBin[]>
@@ -48,7 +42,7 @@ type Props = {
 
 export function DashboardClient({
   open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets, openPredsSummary,
-  dailyModelParams, backtestRuns, horizonWeights, modelLRParams, backtestModelStats, changelog,
+  dailyModelParams, changelog,
   scorecardBolsas, confidenceCalibration, cedearPairs, accionArgPairs, ccl,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
@@ -133,18 +127,12 @@ export function DashboardClient({
         )}
         {active === 'entrenamiento' && (
           <EntrenamientoSection
-            runs={backtestRuns}
-            horizonWeights={horizonWeights}
-            globalWeights={modelWeights}
-            backtestModelStats={backtestModelStats}
             changelog={changelog}
             dailyModelParams={dailyModelParams}
           />
         )}
         {active === 'modelos' && (
           <ModelosSection
-            modelLRParams={modelLRParams}
-            backtestModelStats={backtestModelStats}
             dailyModelParams={dailyModelParams}
           />
         )}
