@@ -278,7 +278,7 @@ function PortfolioCard({
       <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14 }}>
         <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
           Editar portfolio
-          <InfoTip text="Capital inicial: base de la curva de capital y el retorno % — corregilo cuando quieras, recalcula todo con el valor nuevo. Costo de ida y vuelta: comisión + IVA de comprar y vender, usado por el filtro de costo (badges ✓/✗ en Predicciones activas e Intradiario, y el filtro de Operaciones). Default calculado de la tabla de comisiones Balanz 2026 confirmada por vos (+ derecho de mercado BYMA en ARS): 'Normal' aplica a predicciones diarias, 'Intradía' (con la bonificación por mismo plazo/moneda/especie) a predicciones intradiarias." />
+          <InfoTip text="Capital inicial: base de la curva de capital y el retorno % — corregilo cuando quieras, recalcula todo con el valor nuevo. Costo de ida y vuelta: comisión + IVA de comprar y vender, usado por el filtro de costo (badges ✓/✗ en Predicciones activas e Intradiario, y el filtro de Operaciones). Default calculado del tarifario oficial de IOL invertironline (perfil Gold, + derecho de mercado en ARS): 'Normal' aplica a predicciones diarias, 'Intradía' (con la bonificación de operatoria intradiaria de IOL, sólo mercado argentino) a predicciones intradiarias." />
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <div>

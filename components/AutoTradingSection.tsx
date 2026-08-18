@@ -1,0 +1,340 @@
+'use client'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
+import { InfoTip } from './InfoTip'
+import {
+  computeCapitalCurve, formatMoney,
+  type Currency, type AutoTradingConfig, type AutoPortfolio, type AutoTrade,
+} from '@/lib/tracking'
+import type { ScorecardBolsa } from '@/lib/scorecard'
+
+const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
+const CURRENCIES: Currency[] = ['ars', 'usd']
+const CURRENCY_LABEL: Record<Currency, string> = { ars: 'ARS / CEDEARs', usd: 'USD' }
+
+const inp: React.CSSProperties = {
+  background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6,
+  padding: '6px 10px', fontSize: 13, color: 'var(--text)', outline: 'none', fontFamily: MONO,
+}
+const btn: React.CSSProperties = {
+  background: 'var(--text)', color: 'var(--bg)', border: 'none', borderRadius: 6,
+  padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: MONO,
+}
+const card: React.CSSProperties = {
+  background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 12, padding: 20,
+}
+
+async function fetchJson(url: string, opts?: RequestInit) {
+  const r = await fetch(url, opts)
+  const j = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }))
+  return { ...j, status: r.status }
+}
+
+// ── Panel de riesgo / kill switch ────────────────────────────────────────
+function RiskPanel({ config, onUpdated }: { config: AutoTradingConfig | null; onUpdated: (c: AutoTradingConfig) => void }) {
+  const [maxPos, setMaxPos] = useState('')
+  const [maxLoss, setMaxLoss] = useState('')
+  const [maxConcurrent, setMaxConcurrent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!config) return
+    setMaxPos(String(config.max_position_pct_capital))
+    setMaxLoss(String(config.max_daily_loss_pct))
+    setMaxConcurrent(String(config.max_concurrent_positions))
+  }, [config?.max_position_pct_capital, config?.max_daily_loss_pct, config?.max_concurrent_positions])
+
+  async function toggleKillSwitch() {
+    if (!config) return
+    const res = await fetchJson('/api/auto-trading/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kill_switch: !config.kill_switch }),
+    })
+    if (res.ok) onUpdated(res.config)
+  }
+
+  async function saveLimits() {
+    const pos = Number(maxPos), loss = Number(maxLoss), conc = Number(maxConcurrent)
+    if (!Number.isFinite(pos) || pos <= 0 || pos > 100) { setError('Tamaño de posición inválido (0-100%)'); return }
+    if (!Number.isFinite(loss) || loss <= 0 || loss > 100) { setError('Límite de pérdida diaria inválido (0-100%)'); return }
+    if (!Number.isInteger(conc) || conc <= 0) { setError('Posiciones concurrentes debe ser un entero positivo'); return }
+    setSaving(true); setError(null); setSaved(false)
+    const res = await fetchJson('/api/auto-trading/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ max_position_pct_capital: pos, max_daily_loss_pct: loss, max_concurrent_positions: conc }),
+    })
+    setSaving(false)
+    if (res.ok) { onUpdated(res.config); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+    else setError(res.error ?? 'No se pudo guardar')
+  }
+
+  if (!config) return <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>Cargando configuración...</p>
+
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Motor automático</div>
+        <button onClick={toggleKillSwitch}
+          style={{
+            ...btn, padding: '6px 14px',
+            background: config.kill_switch ? 'var(--down)' : 'var(--up)', color: '#fff',
+          }}>
+          {config.kill_switch ? 'Frenado — activar' : 'Corriendo — frenar'}
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 14 }}>
+        Con el motor frenado no se abre ninguna posición nueva. Las que ya estén abiertas se siguen
+        gestionando (stop-loss/take-profit/vencimiento) igual.
+      </div>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+            Tamaño por posición (% del capital)
+            <InfoTip text="Cuánto del capital_inicial de cada portfolio se juega en una sola operación. Conservador por default — el motor arranca en papel sin plata real de por medio, pero este número es el mismo que se usaría el día que pase a vivo." />
+          </div>
+          <input type="number" step="0.1" value={maxPos} onChange={e => setMaxPos(e.target.value)} style={{ ...inp, width: 90 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Pérdida diaria máxima (%)</div>
+          <input type="number" step="0.1" value={maxLoss} onChange={e => setMaxLoss(e.target.value)} style={{ ...inp, width: 90 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Posiciones concurrentes máx.</div>
+          <input type="number" step="1" value={maxConcurrent} onChange={e => setMaxConcurrent(e.target.value)} style={{ ...inp, width: 90 }} />
+        </div>
+        <button style={{ ...btn, opacity: saving ? 0.6 : 1 }} disabled={saving} onClick={saveLimits}>
+          {saving ? 'Guardando...' : saved ? 'Guardado ✓' : 'Guardar'}
+        </button>
+      </div>
+      {error && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 8 }}>{error}</p>}
+    </div>
+  )
+}
+
+// ── Estado del gate estadístico (por qué algo opera o no en vivo) ───────
+function GateSummary({ scorecardBolsas }: { scorecardBolsas: Record<string, ScorecardBolsa> }) {
+  const rows = useMemo(
+    () => Object.values(scorecardBolsas).filter(
+      b => b.horizon_unit === 'minutes' || (b.horizon_unit === 'days' && b.horizon_bucket === 1)
+    ),
+    [scorecardBolsas]
+  )
+  const counts: Record<string, number> = {}
+  for (const b of rows) counts[b.estado] = (counts[b.estado] ?? 0) + 1
+  const validado = rows.filter(b => b.estado === 'validado' && (b.expectancy_net_pct ?? 0) > 0)
+
+  return (
+    <div style={card}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+        Gate estadístico (intradiario todos los horizontes + diario h=1)
+        <InfoTip text="Sólo se abre una posición en vivo (Fase D) en una bolsa (activo×horizonte×moneda) con estado 'validado' y esperanza neta positiva. Mientras tanto el motor sigue en papel para esa bolsa aunque el resto de los filtros (costo, riesgo) pasen — es el comportamiento correcto, no una falla." />
+      </div>
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: validado.length ? 10 : 0 }}>
+        {(['validado', 'acumulando', 'insuficiente', 'sin_edge', 'contraproducente'] as const).map(estado => (
+          <div key={estado}>
+            <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>{estado}</div>
+            <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: estado === 'validado' ? 700 : 400, color: estado === 'validado' ? 'var(--up)' : estado === 'contraproducente' ? 'var(--down)' : 'var(--text)' }}>
+              {counts[estado] ?? 0}
+            </div>
+          </div>
+        ))}
+      </div>
+      {validado.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text-hint)' }}>
+          Ninguna bolsa en alcance está validada con esperanza neta positiva todavía — el motor
+          opera 100% en papel.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Portfolio (capital) por moneda ────────────────────────────────────────
+function PortfolioCard({ currency, portfolio, trades, onCreated }: {
+  currency: Currency
+  portfolio: AutoPortfolio | null
+  trades: AutoTrade[]
+  onCreated: (p: AutoPortfolio) => void
+}) {
+  const [capitalInput, setCapitalInput] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleCreate() {
+    const capital = Number(capitalInput)
+    if (!Number.isFinite(capital) || capital <= 0) { setError('Ingresá un capital inicial válido'); return }
+    setCreating(true); setError(null)
+    const res = await fetchJson('/api/auto-trading/portfolios', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currency, capital_inicial: capital }),
+    })
+    setCreating(false)
+    if (res.ok) onCreated(res.portfolio)
+    else setError(res.error ?? 'No se pudo crear el portfolio')
+  }
+
+  if (!portfolio) {
+    return (
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{CURRENCY_LABEL[currency]}</div>
+        <p style={{ fontSize: 12, color: 'var(--text-hint)', marginBottom: 10 }}>
+          Sin capital de papel asignado — el motor no evalúa entradas en esta moneda hasta que exista.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input type="number" placeholder="Capital inicial (papel)" value={capitalInput}
+            onChange={e => setCapitalInput(e.target.value)} style={{ ...inp, width: 180 }} />
+          <button style={btn} disabled={creating} onClick={handleCreate}>
+            {creating ? 'Creando...' : 'Crear portfolio'}
+          </button>
+        </div>
+        {error && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 8 }}>{error}</p>}
+      </div>
+    )
+  }
+
+  const portfolioTrades = trades.filter(t => t.portfolio_id === portfolio.id)
+  const { curve, capitalActual, retornoPct } = computeCapitalCurve(portfolio, portfolioTrades)
+  const abiertas = portfolioTrades.filter(t => t.status === 'abierta').length
+  const chartData = curve.map(p => ({ date: new Date(p.date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }), capital: p.capital }))
+
+  return (
+    <div style={card}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{CURRENCY_LABEL[currency]} · papel</div>
+      <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital inicial</div>
+          <div style={{ fontFamily: MONO, fontSize: 15 }}>{formatMoney(portfolio.capital_inicial, currency)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital actual (papel)</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700 }}>{formatMoney(capitalActual, currency)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Retorno</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: retornoPct >= 0 ? 'var(--up)' : 'var(--down)' }}>
+            {retornoPct >= 0 ? '+' : ''}{retornoPct.toFixed(2)}%
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Abiertas</div>
+          <div style={{ fontFamily: MONO, fontSize: 15 }}>{abiertas}</div>
+        </div>
+      </div>
+      {curve.length >= 2 ? (
+        <ResponsiveContainer width="100%" height={120}>
+          <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis dataKey="date" tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
+            <YAxis hide domain={['auto', 'auto']} />
+            <Tooltip
+              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: MONO, fontSize: 11 }}
+              formatter={(v) => [formatMoney(Number(v), currency), 'Capital']}
+            />
+            <Line type="monotone" dataKey="capital" stroke="var(--text)" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>La curva aparece cuando el motor cierre la primera operación.</p>
+      )}
+    </div>
+  )
+}
+
+// ── Listado de operaciones del motor ─────────────────────────────────────
+function AutoTradesList({ trades }: { trades: AutoTrade[] }) {
+  if (trades.length === 0) {
+    return <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>El motor todavía no abrió ninguna operación.</p>
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--text-hint)', textAlign: 'left' }}>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Ticker</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Venue</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Modo</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Horizonte</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Monto</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Estado</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>P&amp;L</th>
+            <th style={{ padding: '6px 8px', fontWeight: 500 }}>Abierta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map(t => (
+            <tr key={t.id} style={{ borderBottom: '1px solid var(--border)', fontFamily: MONO }}>
+              <td style={{ padding: '6px 8px' }}>{t.assets?.ticker ?? '?'}</td>
+              <td style={{ padding: '6px 8px', color: 'var(--text-hint)' }}>{t.venue}</td>
+              <td style={{ padding: '6px 8px', color: t.modo === 'vivo' ? 'var(--up)' : 'var(--text-hint)' }}>{t.modo}</td>
+              <td style={{ padding: '6px 8px', color: 'var(--text-hint)' }}>
+                {t.horizon_unit === 'minutes' ? `${t.horizon_value}min` : `${t.horizon_value}d`}
+              </td>
+              <td style={{ padding: '6px 8px' }}>{formatMoney(t.monto_invertido, t.venue === 'US' ? 'usd' : 'ars')}</td>
+              <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>
+                {t.status === 'abierta' ? 'Abierta'
+                  : t.status === 'cerrada_por_stop' ? 'Cerrada · stop'
+                  : t.status === 'cerrada_por_take_profit' ? 'Cerrada · take-profit'
+                  : 'Cerrada · normal'}
+              </td>
+              <td style={{ padding: '6px 8px', color: t.pnl_pct == null ? 'var(--text-hint)' : t.pnl_pct >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                {t.pnl_pct == null ? '—' : `${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%`}
+              </td>
+              <td style={{ padding: '6px 8px', color: 'var(--text-hint)' }}>{new Date(t.opened_at).toLocaleString('es-AR')}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── Sección principal ─────────────────────────────────────────────────────
+export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Record<string, ScorecardBolsa> }) {
+  const [config, setConfig] = useState<AutoTradingConfig | null>(null)
+  const [portfolios, setPortfolios] = useState<AutoPortfolio[]>([])
+  const [trades, setTrades] = useState<AutoTrade[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    const [cRes, pRes, tRes] = await Promise.all([
+      fetchJson('/api/auto-trading/config'),
+      fetchJson('/api/auto-trading/portfolios'),
+      fetchJson('/api/auto-trading/trades'),
+    ])
+    if (cRes.ok) setConfig(cRes.config)
+    if (pRes.ok) setPortfolios(pRes.portfolios)
+    if (tRes.ok) setTrades(tRes.trades)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  if (loading) return <p style={{ fontSize: 13, color: 'var(--text-hint)' }}>Cargando...</p>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <RiskPanel config={config} onUpdated={setConfig} />
+      <GateSummary scorecardBolsas={scorecardBolsas} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+        {CURRENCIES.map(currency => (
+          <PortfolioCard
+            key={currency}
+            currency={currency}
+            portfolio={portfolios.find(p => p.currency === currency) ?? null}
+            trades={trades}
+            onCreated={p => setPortfolios(prev => [...prev.filter(x => x.currency !== p.currency), p])}
+          />
+        ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Operaciones del motor</div>
+        <AutoTradesList trades={trades} />
+      </div>
+    </div>
+  )
+}
