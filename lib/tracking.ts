@@ -211,6 +211,11 @@ export type AutoTradingConfig = {
   live_capital_intraday_ars: number
   live_capital_daily_ars: number
   live_capital_usd: number
+  // Etapa 30 (continuación, 19/08/2026): foto del efectivo real, la escribe python-api en cada
+  // corrida — el dashboard no tiene acceso directo a IOL.
+  last_known_ars_cash: number | null
+  last_known_usd_cash: number | null
+  last_known_cash_at: string | null
   updated_at: string
 }
 

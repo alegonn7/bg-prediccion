@@ -75,9 +75,42 @@ export async function PATCH(req: NextRequest) {
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: false, error: 'Nada para actualizar' }, { status: 400 })
   }
-  updates.updated_at = new Date().toISOString()
 
   const admin = createAdminClient()
+
+  // Etapa 30 (continuación, 19/08/2026, a pedido explícito del usuario): no dejar guardar topes
+  // que sumen más que el efectivo real conocido — la foto la escribe python-api en cada corrida
+  // (last_known_*_cash), puede tener hasta ~15 min de atraso, no es en tiempo real.
+  const touchesCapitalFields = ['live_capital_intraday_ars', 'live_capital_daily_ars', 'live_capital_usd']
+    .some(f => updates[f] !== undefined)
+  if (touchesCapitalFields) {
+    const { data: current, error: currentErr } = await admin
+      .from('auto_trading_config')
+      .select('live_capital_intraday_ars, live_capital_daily_ars, live_capital_usd, last_known_ars_cash, last_known_usd_cash')
+      .eq('id', true)
+      .single()
+    if (currentErr) return NextResponse.json({ ok: false, error: currentErr.message }, { status: 500 })
+
+    const nextIntradia = (updates.live_capital_intraday_ars as number) ?? current.live_capital_intraday_ars
+    const nextDiario = (updates.live_capital_daily_ars as number) ?? current.live_capital_daily_ars
+    const nextUsd = (updates.live_capital_usd as number) ?? current.live_capital_usd
+
+    if (current.last_known_ars_cash != null && nextIntradia + nextDiario > current.last_known_ars_cash) {
+      return NextResponse.json({
+        ok: false,
+        error: `Los topes ARS (intradiario + diario = ${(nextIntradia + nextDiario).toFixed(0)}) superan tu efectivo real conocido (${current.last_known_ars_cash.toFixed(0)}). Bajá alguno de los dos.`,
+      }, { status: 400 })
+    }
+    if (current.last_known_usd_cash != null && nextUsd > current.last_known_usd_cash) {
+      return NextResponse.json({
+        ok: false,
+        error: `El tope USD (${nextUsd.toFixed(2)}) supera tu efectivo real conocido (US$${current.last_known_usd_cash.toFixed(2)}).`,
+      }, { status: 400 })
+    }
+  }
+
+  updates.updated_at = new Date().toISOString()
+
   const { data, error } = await admin
     .from('auto_trading_config')
     .update(updates)

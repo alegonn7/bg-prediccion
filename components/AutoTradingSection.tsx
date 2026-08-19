@@ -179,6 +179,31 @@ function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | n
         simuladas. Cambiarlos tiene efecto en la próxima corrida del cron (hasta ~15 min intradía).
       </div>
 
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 14, padding: '10px 14px', background: 'var(--bg-muted)', borderRadius: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Efectivo real ARS</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700 }}>
+            {config.last_known_ars_cash != null ? formatMoney(config.last_known_ars_cash, 'ars') : '—'}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Efectivo real USD (Cuenta EEUU)</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700 }}>
+            {config.last_known_usd_cash != null ? formatMoney(config.last_known_usd_cash, 'usd') : '—'}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Actualizado</div>
+          <div style={{ fontFamily: MONO, fontSize: 13, color: 'var(--text-hint)' }}>
+            {config.last_known_cash_at ? new Date(config.last_known_cash_at).toLocaleString('es-AR') : 'todavía no'}
+          </div>
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 14 }}>
+        Lo guarda el motor en cada corrida (hasta ~15 min de atraso) — no es en tiempo real. Los
+        topes de abajo no te dejan guardar más de lo que hay acá.
+      </div>
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
         <button onClick={() => toggle('live_enabled_byma')} style={toggleBtn(config.live_enabled_byma, '')}>
           Argentina en vivo: {config.live_enabled_byma ? 'ON' : 'OFF'}
