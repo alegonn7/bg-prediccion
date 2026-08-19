@@ -47,6 +47,31 @@ export async function PATCH(req: NextRequest) {
     }
     updates.max_concurrent_positions = v
   }
+
+  // Etapa 30 (continuación, 19/08/2026): controles de plata real, antes sólo editables por SQL.
+  for (const field of ['override_statistical_gate', 'live_enabled_byma', 'live_enabled_us'] as const) {
+    if (body?.[field] === undefined) continue
+    if (typeof body[field] !== 'boolean') {
+      return NextResponse.json({ ok: false, error: `${field} debe ser true|false` }, { status: 400 })
+    }
+    updates[field] = body[field]
+  }
+  if (body?.live_position_pct !== undefined) {
+    const v = Number(body.live_position_pct)
+    if (!Number.isFinite(v) || v <= 0 || v > 100) {
+      return NextResponse.json({ ok: false, error: 'live_position_pct debe ser un número entre 0 y 100' }, { status: 400 })
+    }
+    updates.live_position_pct = v
+  }
+  for (const field of ['live_capital_intraday_ars', 'live_capital_daily_ars', 'live_capital_usd'] as const) {
+    if (body?.[field] === undefined) continue
+    const v = Number(body[field])
+    if (!Number.isFinite(v) || v < 0) {
+      return NextResponse.json({ ok: false, error: `${field} debe ser un número ≥ 0` }, { status: 400 })
+    }
+    updates[field] = v
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ ok: false, error: 'Nada para actualizar' }, { status: 400 })
   }

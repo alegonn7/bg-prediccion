@@ -113,6 +113,115 @@ function RiskPanel({ config, onUpdated }: { config: AutoTradingConfig | null; on
   )
 }
 
+// ── Controles de plata real (Etapa 30 continuación, 19/08/2026) ─────────
+// Bordeado en rojo a propósito — a diferencia de RiskPanel de arriba (que rige tanto papel como
+// vivo), estos 3 toggles y 4 montos determinan si el motor manda órdenes REALES contra tu cuenta
+// de IOL. Antes sólo editables por SQL directo; el usuario pidió explícitamente sumarlos acá.
+function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | null; onUpdated: (c: AutoTradingConfig) => void }) {
+  const [livePct, setLivePct] = useState('')
+  const [capIntradia, setCapIntradia] = useState('')
+  const [capDiario, setCapDiario] = useState('')
+  const [capUsd, setCapUsd] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!config) return
+    setLivePct(String(config.live_position_pct))
+    setCapIntradia(String(config.live_capital_intraday_ars))
+    setCapDiario(String(config.live_capital_daily_ars))
+    setCapUsd(String(config.live_capital_usd))
+  }, [config?.live_position_pct, config?.live_capital_intraday_ars, config?.live_capital_daily_ars, config?.live_capital_usd])
+
+  async function toggle(field: 'override_statistical_gate' | 'live_enabled_byma' | 'live_enabled_us') {
+    if (!config) return
+    const res = await fetchJson('/api/auto-trading/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: !config[field] }),
+    })
+    if (res.ok) onUpdated(res.config)
+  }
+
+  async function saveAmounts() {
+    const pct = Number(livePct), ars1 = Number(capIntradia), ars2 = Number(capDiario), usd = Number(capUsd)
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) { setError('% por operación inválido (0-100%)'); return }
+    if (!Number.isFinite(ars1) || ars1 < 0) { setError('Tope ARS intradiario inválido'); return }
+    if (!Number.isFinite(ars2) || ars2 < 0) { setError('Tope ARS diario inválido'); return }
+    if (!Number.isFinite(usd) || usd < 0) { setError('Tope USD inválido'); return }
+    setSaving(true); setError(null); setSaved(false)
+    const res = await fetchJson('/api/auto-trading/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        live_position_pct: pct, live_capital_intraday_ars: ars1,
+        live_capital_daily_ars: ars2, live_capital_usd: usd,
+      }),
+    })
+    setSaving(false)
+    if (res.ok) { onUpdated(res.config); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+    else setError(res.error ?? 'No se pudo guardar')
+  }
+
+  if (!config) return null
+
+  const toggleBtn = (on: boolean, label: string) => ({
+    ...btn, padding: '6px 12px', fontSize: 12,
+    background: on ? 'var(--up)' : 'var(--bg-muted)', color: on ? '#fff' : 'var(--text-muted)',
+  })
+
+  return (
+    <div style={{ ...card, border: '1px solid var(--down)' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--down)' }}>
+        ⚠ Plata real — controles de vivo
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 14 }}>
+        Estos interruptores deciden si el motor manda órdenes reales contra tu cuenta de IOL, no
+        simuladas. Cambiarlos tiene efecto en la próxima corrida del cron (hasta ~15 min intradía).
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        <button onClick={() => toggle('live_enabled_byma')} style={toggleBtn(config.live_enabled_byma, '')}>
+          Argentina en vivo: {config.live_enabled_byma ? 'ON' : 'OFF'}
+        </button>
+        <button onClick={() => toggle('live_enabled_us')} style={toggleBtn(config.live_enabled_us, '')}>
+          EEUU en vivo: {config.live_enabled_us ? 'ON' : 'OFF'}
+        </button>
+        <button onClick={() => toggle('override_statistical_gate')}
+          style={{ ...toggleBtn(config.override_statistical_gate, ''), background: config.override_statistical_gate ? 'var(--down)' : 'var(--bg-muted)' }}>
+          Saltear gate estadístico: {config.override_statistical_gate ? 'ON' : 'OFF'}
+        </button>
+        <InfoTip text="Con esto prendido, el motor opera aunque scorecard_bolsas no muestre ninguna bolsa 'validado' — decisión explícita de operar sin edge estadístico confirmado todavía. El resto de los filtros (costo, riesgo) siguen aplicando igual." />
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+            % del efectivo real por operación
+            <InfoTip text="En vivo, el tamaño de cada posición no sale del capital de papel — sale de tu efectivo REAL disponible en IOL en ese momento, multiplicado por este %." />
+          </div>
+          <input type="number" step="1" value={livePct} onChange={e => setLivePct(e.target.value)} style={{ ...inp, width: 90 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Tope ARS intradiario</div>
+          <input type="number" step="100" value={capIntradia} onChange={e => setCapIntradia(e.target.value)} style={{ ...inp, width: 110 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Tope ARS diario</div>
+          <input type="number" step="100" value={capDiario} onChange={e => setCapDiario(e.target.value)} style={{ ...inp, width: 110 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Tope USD (EEUU, sin sub-repartir)</div>
+          <input type="number" step="1" value={capUsd} onChange={e => setCapUsd(e.target.value)} style={{ ...inp, width: 100 }} />
+        </div>
+        <button style={{ ...btn, opacity: saving ? 0.6 : 1 }} disabled={saving} onClick={saveAmounts}>
+          {saving ? 'Guardando...' : saved ? 'Guardado ✓' : 'Guardar'}
+        </button>
+      </div>
+      {error && <p style={{ fontSize: 11, color: 'var(--down)', marginTop: 8 }}>{error}</p>}
+    </div>
+  )
+}
+
 // ── Estado del gate estadístico (por qué algo opera o no en vivo) ───────
 function GateSummary({ scorecardBolsas }: { scorecardBolsas: Record<string, ScorecardBolsa> }) {
   const rows = useMemo(
@@ -317,6 +426,7 @@ export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Recor
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <RiskPanel config={config} onUpdated={setConfig} />
+      <LiveTradingPanel config={config} onUpdated={setConfig} />
       <GateSummary scorecardBolsas={scorecardBolsas} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>

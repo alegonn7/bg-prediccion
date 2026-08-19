@@ -203,6 +203,14 @@ export type AutoTradingConfig = {
   max_position_pct_capital: number
   max_daily_loss_pct: number
   max_concurrent_positions: number
+  // Etapa 30 (continuación, 19/08/2026): controles de plata real, antes sólo editables por SQL.
+  override_statistical_gate: boolean
+  live_enabled_byma: boolean
+  live_enabled_us: boolean
+  live_position_pct: number
+  live_capital_intraday_ars: number
+  live_capital_daily_ars: number
+  live_capital_usd: number
   updated_at: string
 }
 
