@@ -82,9 +82,11 @@ export function computeCapitalCurve(
 }
 
 export function formatMoney(n: number, currency: Currency): string {
+  // AR$/US$ explícitos (no sólo "$") — un "$" solo es ambiguo, en Argentina significa pesos pero
+  // se confunde fácil con dólares al lado de montos en USD del mismo panel.
   return currency === 'usd'
     ? `US$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
-    : `$${n.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`
+    : `AR$${n.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`
 }
 
 // ── Etapa 21 (+ Etapa 30, recalibrado a IOL): filtro de costo de operación ────────────────────
