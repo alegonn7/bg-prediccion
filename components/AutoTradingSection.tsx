@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
 import { InfoTip } from './InfoTip'
+import { Pagination } from './Pagination'
 import {
   computeCapitalCurve, formatMoney,
   type Currency, type AutoTradingConfig, type AutoPortfolio, type AutoTrade,
@@ -11,6 +12,7 @@ import type { ScorecardBolsa } from '@/lib/scorecard'
 const MONO = "var(--font-mono, 'IBM Plex Mono', monospace)"
 const CURRENCIES: Currency[] = ['ars', 'usd']
 const CURRENCY_LABEL: Record<Currency, string> = { ars: 'ARS / CEDEARs', usd: 'USD' }
+const PAGE_SIZE = 15
 
 const inp: React.CSSProperties = {
   background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6,
@@ -376,6 +378,90 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
   )
 }
 
+// ── Cartera vivo (plata real) — curva de capital ─────────────────────────
+// A diferencia de PortfolioCard (papel, con capital_inicial propio en `auto_portfolios`), acá no
+// existe una tabla equivalente para vivo: el capital real vive en IOL, y `auto_trading_config`
+// sólo guarda una FOTO del efectivo actual (`last_known_*_cash`), no una serie histórica. La base
+// más honesta disponible es el tope configurado por el usuario (`live_capital_*`) + el P&L real ya
+// realizado de las operaciones vivo — no pretende ser el saldo exacto de IOL en cada punto del
+// tiempo, sólo la evolución de lo que el motor comprometió y ganó/perdió.
+function LiveCapitalCard({ currency, config, trades }: {
+  currency: Currency
+  config: AutoTradingConfig | null
+  trades: AutoTrade[] // ya filtrado a modo==='vivo' y a esta moneda
+}) {
+  const capitalBase = currency === 'ars'
+    ? (config?.live_capital_intraday_ars ?? 0) + (config?.live_capital_daily_ars ?? 0)
+    : (config?.live_capital_usd ?? 0)
+  const enabled = currency === 'ars' ? !!config?.live_enabled_byma : !!config?.live_enabled_us
+
+  if (!enabled && trades.length === 0) {
+    return (
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{CURRENCY_LABEL[currency]} · vivo</div>
+        <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>
+          Vivo deshabilitado en esta moneda — sin operaciones reales todavía.
+        </p>
+      </div>
+    )
+  }
+
+  const firstOpened = trades.reduce<string | null>(
+    (min, t) => (!min || t.opened_at < min) ? t.opened_at : min, null
+  )
+  const { curve, capitalActual, retornoPct } = computeCapitalCurve(
+    { capital_inicial: capitalBase, created_at: firstOpened ?? new Date().toISOString() },
+    trades,
+  )
+  const abiertas = trades.filter(t => t.status === 'abierta').length
+  const chartData = curve.map(p => ({ date: new Date(p.date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }), capital: p.capital }))
+
+  return (
+    <div style={{ ...card, border: '1px solid var(--down)' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5 }}>
+        {CURRENCY_LABEL[currency]} · vivo (plata real)
+        <InfoTip text="Base = tope configurado en 'Plata real' arriba (live_capital_intraday_ars + live_capital_daily_ars en ARS, live_capital_usd en USD), no el saldo exacto de IOL en cada momento — eso está arriba en 'Efectivo real'. Esta curva es la base más P&L real acumulado de las operaciones vivo cerradas." />
+      </div>
+      <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital asignado (config)</div>
+          <div style={{ fontFamily: MONO, fontSize: 15 }}>{formatMoney(capitalBase, currency)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital actual (asignado + P&amp;L real)</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700 }}>{formatMoney(capitalActual, currency)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Retorno</div>
+          <div style={{ fontFamily: MONO, fontSize: 15, fontWeight: 700, color: retornoPct >= 0 ? 'var(--up)' : 'var(--down)' }}>
+            {retornoPct >= 0 ? '+' : ''}{retornoPct.toFixed(2)}%
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Abiertas</div>
+          <div style={{ fontFamily: MONO, fontSize: 15 }}>{abiertas}</div>
+        </div>
+      </div>
+      {curve.length >= 2 ? (
+        <ResponsiveContainer width="100%" height={120}>
+          <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+            <XAxis dataKey="date" tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
+            <YAxis hide domain={['auto', 'auto']} />
+            <Tooltip
+              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: MONO, fontSize: 11 }}
+              formatter={(v) => [formatMoney(Number(v), currency), 'Capital']}
+            />
+            <Line type="monotone" dataKey="capital" stroke="var(--down)" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>La curva aparece cuando el motor cierre la primera operación real.</p>
+      )}
+    </div>
+  )
+}
+
 // ── Listado de operaciones del motor ─────────────────────────────────────
 function AutoTradesList({ trades }: { trades: AutoTrade[] }) {
   if (trades.length === 0) {
@@ -430,6 +516,8 @@ export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Recor
   const [portfolios, setPortfolios] = useState<AutoPortfolio[]>([])
   const [trades, setTrades] = useState<AutoTrade[]>([])
   const [loading, setLoading] = useState(true)
+  const [vivoPage, setVivoPage] = useState(1)
+  const [papelPage, setPapelPage] = useState(1)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -446,6 +534,11 @@ export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Recor
 
   useEffect(() => { refresh() }, [refresh])
 
+  const vivoTrades = useMemo(() => trades.filter(t => t.modo === 'vivo'), [trades])
+  const papelTrades = useMemo(() => trades.filter(t => t.modo !== 'vivo'), [trades])
+  const vivoPageItems = vivoTrades.slice((vivoPage - 1) * PAGE_SIZE, vivoPage * PAGE_SIZE)
+  const papelPageItems = papelTrades.slice((papelPage - 1) * PAGE_SIZE, papelPage * PAGE_SIZE)
+
   if (loading) return <p style={{ fontSize: 13, color: 'var(--text-hint)' }}>Cargando...</p>
 
   return (
@@ -454,21 +547,47 @@ export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Recor
       <LiveTradingPanel config={config} onUpdated={setConfig} />
       <GateSummary scorecardBolsas={scorecardBolsas} />
 
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        Cartera · vivo (plata real)
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+        {CURRENCIES.map(currency => (
+          <LiveCapitalCard
+            key={currency}
+            currency={currency}
+            config={config}
+            trades={vivoTrades.filter(t => currency === 'ars' ? t.venue === 'BYMA' : t.venue === 'US')}
+          />
+        ))}
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hint)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        Cartera · papel (simulada)
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
         {CURRENCIES.map(currency => (
           <PortfolioCard
             key={currency}
             currency={currency}
             portfolio={portfolios.find(p => p.currency === currency) ?? null}
-            trades={trades}
+            trades={papelTrades}
             onCreated={p => setPortfolios(prev => [...prev.filter(x => x.currency !== p.currency), p])}
           />
         ))}
       </div>
 
       <div style={card}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Operaciones del motor</div>
-        <AutoTradesList trades={trades} />
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Operaciones reales (vivo)</div>
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 14 }}>Plata real ejecutada contra tu cuenta de IOL.</div>
+        <AutoTradesList trades={vivoPageItems} />
+        <Pagination page={vivoPage} totalItems={vivoTrades.length} pageSize={PAGE_SIZE} onChange={setVivoPage} />
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Operaciones simuladas (papel)</div>
+        <div style={{ fontSize: 11, color: 'var(--text-hint)', marginBottom: 14 }}>Simulación, sin plata real de por medio.</div>
+        <AutoTradesList trades={papelPageItems} />
+        <Pagination page={papelPage} totalItems={papelTrades.length} pageSize={PAGE_SIZE} onChange={setPapelPage} />
       </div>
     </div>
   )
