@@ -499,7 +499,12 @@ function AutoTradesList({ trades }: { trades: AutoTrade[] }) {
                   : 'Cerrada · normal'}
               </td>
               <td style={{ padding: '6px 8px', color: t.pnl_pct == null ? 'var(--text-hint)' : t.pnl_pct >= 0 ? 'var(--up)' : 'var(--down)' }}>
-                {t.pnl_pct == null ? '—' : `${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%`}
+                {t.pnl_pct == null ? '—' : (
+                  <>
+                    {t.pnl_monto != null && `${t.pnl_monto >= 0 ? '+' : ''}${formatMoney(t.pnl_monto, t.venue === 'US' ? 'usd' : 'ars')} `}
+                    ({t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%)
+                  </>
+                )}
               </td>
               <td style={{ padding: '6px 8px', color: 'var(--text-hint)' }}>{new Date(t.opened_at).toLocaleString('es-AR')}</td>
             </tr>
