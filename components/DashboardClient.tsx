@@ -9,7 +9,6 @@ import { SettingsSection } from './Settings'
 import { ModelAnalysisSection } from './ModelAnalysis'
 import { NewsSectionClient } from './NewsSection'
 import { ArgentinaSectionClient } from './ArgentinaSection'
-import { CedearDualSection } from './CedearDualSection'
 import { AccionArgDualSection } from './AccionArgDualSection'
 import { IntradaySectionClient } from './IntradaySection'
 import { EntrenamientoSection } from './EntrenamientoSection'
@@ -44,7 +43,7 @@ type Props = {
 export function DashboardClient({
   open, closed, closedTruncated, intradayStats, modelWeights, hits, total, assets, openPredsSummary,
   dailyModelParams, changelog,
-  scorecardBolsas, confidenceCalibration, cedearPairs, accionArgPairs, ccl,
+  scorecardBolsas, confidenceCalibration, accionArgPairs,
 }: Props) {
   const [active, setActive] = useState<Tab>('scorecard')
 
@@ -122,7 +121,6 @@ export function DashboardClient({
         {active === 'news'          && <NewsSectionClient />}
         {active === 'argentina'     && (
           <>
-            <CedearDualSection pairs={cedearPairs} ccl={ccl} openPredictions={open} scorecardBolsas={scorecardBolsas} />
             <AccionArgDualSection pairs={accionArgPairs} openPredictions={open} scorecardBolsas={scorecardBolsas} />
             <ArgentinaSectionClient />
           </>

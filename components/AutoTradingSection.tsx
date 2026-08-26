@@ -345,15 +345,19 @@ function GateSummary({ scorecardBolsas }: { scorecardBolsas: Record<string, Scor
 }
 
 // ── Portfolio (capital) por moneda ────────────────────────────────────────
-function PortfolioCard({ currency, portfolio, trades, onCreated }: {
+function PortfolioCard({ currency, portfolio, trades, maxPositionPct, onCreated }: {
   currency: Currency
   portfolio: AutoPortfolio | null
   trades: AutoTrade[]
+  maxPositionPct: number // config.max_position_pct_capital — para traducir monto base <-> capital_inicial
   onCreated: (p: AutoPortfolio) => void
 }) {
   const [capitalInput, setCapitalInput] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   async function handleCreate() {
     const capital = Number(capitalInput)
@@ -366,6 +370,29 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
     setCreating(false)
     if (res.ok) onCreated(res.portfolio)
     else setError(res.error ?? 'No se pudo crear el portfolio')
+  }
+
+  // Etapa 30 (26/08/2026, a pedido explícito del usuario — "el monto que usa de base", no el
+  // capital total): lo que el usuario quiere tocar directamente es el monto en pesos/dólares que
+  // usa CADA operación en papel, no `capital_inicial` (un número más abstracto del que ese monto
+  // sale multiplicado por `max_position_pct_capital`). En vez de sumar un campo nuevo en la base
+  // (y duplicar de dónde sale la verdad), se edita el monto acá y se despeja `capital_inicial` para
+  // que ESE % dé exactamente el monto pedido -- capital_inicial = monto_base / (pct/100). La
+  // fórmula real de python-api (capital_inicial × max_position_pct_capital × confianza) queda
+  // intacta, esto sólo traduce la entrada del usuario a la variable que ya existe.
+  async function handleSaveEdit(portfolioId: string) {
+    const montoBase = Number(editValue)
+    if (!Number.isFinite(montoBase) || montoBase <= 0) { setError('Ingresá un monto base válido'); return }
+    if (maxPositionPct <= 0) { setError('El % por posición (panel de arriba) tiene que ser mayor a 0 primero'); return }
+    const capital = montoBase / (maxPositionPct / 100)
+    setSavingEdit(true); setError(null)
+    const res = await fetchJson('/api/auto-trading/portfolios', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: portfolioId, capital_inicial: capital }),
+    })
+    setSavingEdit(false)
+    if (res.ok) { onCreated(res.portfolio); setEditing(false) }
+    else setError(res.error ?? 'No se pudo actualizar el monto base')
   }
 
   if (!portfolio) {
@@ -390,14 +417,40 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
   const portfolioTrades = trades.filter(t => t.portfolio_id === portfolio.id)
   const { curve, capitalActual, retornoPct } = computeCapitalCurve(portfolio, portfolioTrades)
   const abiertas = portfolioTrades.filter(t => t.status === 'abierta').length
+  const montoBaseActual = portfolio.capital_inicial * maxPositionPct / 100
 
   return (
     <div style={card}>
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{CURRENCY_LABEL[currency]} · papel</div>
       <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital inicial</div>
-          <div style={{ fontFamily: MONO, fontSize: 15 }}>{formatMoney(portfolio.capital_inicial, currency)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+            Monto base por operación
+            <InfoTip text={`Lo que usa cada posición en papel a confianza promedio (0.5) — antes de que la confianza real de cada predicción lo ajuste entre 0.5x y 2x. Sale de capital_inicial × ${maxPositionPct}% (el % por posición del panel de arriba); editarlo acá recalcula capital_inicial para atrás, así este monto da exacto con el % actual.`} />
+          </div>
+          {editing ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="number" value={editValue} onChange={e => setEditValue(e.target.value)}
+                style={{ ...inp, width: 130, fontSize: 15 }} autoFocus />
+              <button style={{ ...btn, padding: '4px 10px', fontSize: 12, opacity: savingEdit ? 0.6 : 1 }}
+                disabled={savingEdit} onClick={() => handleSaveEdit(portfolio.id)}>
+                {savingEdit ? '...' : '✓'}
+              </button>
+              <button style={{ ...btn, padding: '4px 10px', fontSize: 12, background: 'var(--bg-muted)', color: 'var(--text)' }}
+                onClick={() => setEditing(false)}>
+                ✕
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ fontFamily: MONO, fontSize: 15 }}>{formatMoney(montoBaseActual, currency)}</div>
+              <button
+                onClick={() => { setEditValue(String(Math.round(montoBaseActual))); setEditing(true); setError(null) }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-hint)', cursor: 'pointer', fontSize: 11, textDecoration: 'underline', padding: 0, fontFamily: MONO }}>
+                editar
+              </button>
+            </div>
+          )}
         </div>
         <div>
           <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>Capital actual (papel)</div>
@@ -414,6 +467,7 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
           <div style={{ fontFamily: MONO, fontSize: 15 }}>{abiertas}</div>
         </div>
       </div>
+      {error && <p style={{ fontSize: 11, color: 'var(--down)', marginBottom: 10 }}>{error}</p>}
       {curve.length >= 2 ? (
         <EvolutionChart curve={curve} currency={currency} />
       ) : (
@@ -609,6 +663,7 @@ export function AutoTradingSection({ scorecardBolsas }: { scorecardBolsas: Recor
             currency={currency}
             portfolio={portfolios.find(p => p.currency === currency) ?? null}
             trades={papelTrades}
+            maxPositionPct={Number(config?.max_position_pct_capital ?? 2)}
             onCreated={p => setPortfolios(prev => [...prev.filter(x => x.currency !== p.currency), p])}
           />
         ))}
