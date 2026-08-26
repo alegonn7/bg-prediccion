@@ -95,16 +95,27 @@ export async function PATCH(req: NextRequest) {
     const nextDiario = (updates.live_capital_daily_ars as number) ?? current.live_capital_daily_ars
     const nextUsd = (updates.live_capital_usd as number) ?? current.live_capital_usd
 
-    if (current.last_known_ars_cash != null && nextIntradia + nextDiario > current.last_known_ars_cash) {
+    // Etapa 30 (26/08/2026, bug real reportado por el usuario): comparar contra el cash CRUDO
+    // (ej. 12719.73) mientras el mensaje de error lo redondeaba a enteros para mostrarlo (12720)
+    // hacía que "12720 supera a 12720" pareciera un empate imposible -- en realidad perdía por 27
+    // centavos que el usuario no podía ver ni escribir (los topes se cargan en pesos enteros). Se
+    // compara contra el mismo redondeo que se muestra en pantalla (enteros para ARS, 2 decimales
+    // para USD, igual que formatMoney/.toFixed de abajo) -- así usar el 100% del efectivo que el
+    // usuario VE siempre valida, sin abrir la puerta a un tope mayor al real (sigue rechazando
+    // cualquier cosa por encima de ese redondeo, no sólo lo que es estrictamente igual).
+    const arsCashRounded = current.last_known_ars_cash != null ? Math.round(current.last_known_ars_cash) : null
+    const usdCashRounded = current.last_known_usd_cash != null ? Math.round(current.last_known_usd_cash * 100) / 100 : null
+
+    if (arsCashRounded != null && nextIntradia + nextDiario > arsCashRounded) {
       return NextResponse.json({
         ok: false,
-        error: `Los topes ARS (intradiario + diario = ${(nextIntradia + nextDiario).toFixed(0)}) superan tu efectivo real conocido (${current.last_known_ars_cash.toFixed(0)}). Bajá alguno de los dos.`,
+        error: `Los topes ARS (intradiario + diario = ${(nextIntradia + nextDiario).toFixed(0)}) superan tu efectivo real conocido (${arsCashRounded.toFixed(0)}). Bajá alguno de los dos.`,
       }, { status: 400 })
     }
-    if (current.last_known_usd_cash != null && nextUsd > current.last_known_usd_cash) {
+    if (usdCashRounded != null && nextUsd > usdCashRounded) {
       return NextResponse.json({
         ok: false,
-        error: `El tope USD (${nextUsd.toFixed(2)}) supera tu efectivo real conocido (US$${current.last_known_usd_cash.toFixed(2)}).`,
+        error: `El tope USD (${nextUsd.toFixed(2)}) supera tu efectivo real conocido (US$${usdCashRounded.toFixed(2)}).`,
       }, { status: 400 })
     }
   }
