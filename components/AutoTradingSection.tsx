@@ -372,23 +372,18 @@ function PortfolioCard({ currency, portfolio, trades, maxPositionPct, onCreated 
     else setError(res.error ?? 'No se pudo crear el portfolio')
   }
 
-  // Etapa 30 (26/08/2026, a pedido explícito del usuario — "el monto que usa de base", no el
-  // capital total): lo que el usuario quiere tocar directamente es el monto en pesos/dólares que
-  // usa CADA operación en papel, no `capital_inicial` (un número más abstracto del que ese monto
-  // sale multiplicado por `max_position_pct_capital`). En vez de sumar un campo nuevo en la base
-  // (y duplicar de dónde sale la verdad), se edita el monto acá y se despeja `capital_inicial` para
-  // que ESE % dé exactamente el monto pedido -- capital_inicial = monto_base / (pct/100). La
-  // fórmula real de python-api (capital_inicial × max_position_pct_capital × confianza) queda
-  // intacta, esto sólo traduce la entrada del usuario a la variable que ya existe.
+  // Etapa 30 (26/08/2026, corregido tras un diseño equivocado -- el usuario reportó que editar
+  // esto le cambiaba capital_inicial sin sentido): el monto que usa cada operación en papel ahora
+  // es un campo propio (`monto_base_operacion`), totalmente independiente de `capital_inicial` --
+  // tocar uno nunca cambia el otro. capital_inicial se mantiene fijo (representa el capital total
+  // simulado, ej. US$1.000, no una perilla de ajuste).
   async function handleSaveEdit(portfolioId: string) {
     const montoBase = Number(editValue)
     if (!Number.isFinite(montoBase) || montoBase <= 0) { setError('Ingresá un monto base válido'); return }
-    if (maxPositionPct <= 0) { setError('El % por posición (panel de arriba) tiene que ser mayor a 0 primero'); return }
-    const capital = montoBase / (maxPositionPct / 100)
     setSavingEdit(true); setError(null)
     const res = await fetchJson('/api/auto-trading/portfolios', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: portfolioId, capital_inicial: capital }),
+      body: JSON.stringify({ id: portfolioId, monto_base_operacion: montoBase }),
     })
     setSavingEdit(false)
     if (res.ok) { onCreated(res.portfolio); setEditing(false) }
@@ -417,7 +412,7 @@ function PortfolioCard({ currency, portfolio, trades, maxPositionPct, onCreated 
   const portfolioTrades = trades.filter(t => t.portfolio_id === portfolio.id)
   const { curve, capitalActual, retornoPct } = computeCapitalCurve(portfolio, portfolioTrades)
   const abiertas = portfolioTrades.filter(t => t.status === 'abierta').length
-  const montoBaseActual = portfolio.capital_inicial * maxPositionPct / 100
+  const montoBaseActual = portfolio.monto_base_operacion ?? (portfolio.capital_inicial * maxPositionPct / 100)
 
   return (
     <div style={card}>
@@ -426,7 +421,7 @@ function PortfolioCard({ currency, portfolio, trades, maxPositionPct, onCreated 
         <div>
           <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
             Monto base por operación
-            <InfoTip text={`Lo que usa cada posición en papel a confianza promedio (0.5) — antes de que la confianza real de cada predicción lo ajuste entre 0.5x y 2x. Sale de capital_inicial × ${maxPositionPct}% (el % por posición del panel de arriba); editarlo acá recalcula capital_inicial para atrás, así este monto da exacto con el % actual.`} />
+            <InfoTip text={`Lo que usa cada posición en papel a confianza promedio (0.5) — antes de que la confianza real de cada predicción lo ajuste entre 0.5x y 2x. Editable directo acá, independiente del capital inicial (que se mantiene fijo). Mientras no se edite, sale de capital_inicial × ${maxPositionPct}% (el % por posición del panel de arriba).`} />
           </div>
           {editing ? (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

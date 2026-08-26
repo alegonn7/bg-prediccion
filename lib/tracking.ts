@@ -225,6 +225,10 @@ export type AutoPortfolio = {
   id: string
   currency: Currency
   capital_inicial: number
+  // Etapa 30 (26/08/2026): monto directo que usa cada operación en papel (a confianza promedio),
+  // independiente de capital_inicial — null hasta que el usuario lo fija a mano, cae al viejo
+  // cálculo (capital_inicial × max_position_pct_capital) mientras tanto.
+  monto_base_operacion: number | null
   created_at: string
 }
 
