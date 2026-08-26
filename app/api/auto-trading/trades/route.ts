@@ -20,6 +20,11 @@ export async function GET() {
       stop_loss_usado_pct, take_profit_pct, entry_price, status, exit_price, pnl_pct, pnl_monto,
       opened_at, closed_at, assets(ticker, name)
     `)
+    // Etapa 30 (26/08/2026, a pedido explícito del usuario): 'cerrada_sin_ejecutar' son filas
+    // 'vivo' cuya compra nunca generó una orden real en IOL (bug de hoy, ya arreglado) -- no hubo
+    // ninguna operación de verdad detrás, no tienen que ensuciar el historial visible. Se dejan en
+    // la base (no se borran) por si hace falta auditarlas más adelante.
+    .neq('status', 'cerrada_sin_ejecutar')
     .order('opened_at', { ascending: false })
     .limit(500)
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })

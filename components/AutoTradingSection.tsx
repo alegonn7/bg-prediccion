@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
 import { InfoTip } from './InfoTip'
 import { Pagination } from './Pagination'
+import { EvolutionChart } from './EvolutionChart'
 import {
   computeCapitalCurve, formatMoney,
   type Currency, type AutoTradingConfig, type AutoPortfolio, type AutoTrade,
@@ -124,9 +124,12 @@ function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | n
   const [capIntradia, setCapIntradia] = useState('')
   const [capDiario, setCapDiario] = useState('')
   const [capUsd, setCapUsd] = useState('')
+  const [pctIntradia, setPctIntradia] = useState('')
+  const [pctDiario, setPctDiario] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [reloading, setReloading] = useState(false)
 
   useEffect(() => {
     if (!config) return
@@ -143,6 +146,36 @@ function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | n
       body: JSON.stringify({ [field]: !config[field] }),
     })
     if (res.ok) onUpdated(res.config)
+  }
+
+  // Etapa 30 (26/08/2026, a pedido explícito del usuario): consulta el efectivo real al toque en
+  // vez de esperar hasta ~15 min a la próxima corrida del cron — pega a python-api (sólo lectura
+  // contra IOL + un update chico), no corre ninguna lógica de entradas/salidas.
+  async function reloadCash() {
+    setReloading(true); setError(null)
+    const res = await fetchJson('/api/auto-trading/refresh-cash', { method: 'POST' })
+    if (res.ok) {
+      const cfgRes = await fetchJson('/api/auto-trading/config')
+      if (cfgRes.ok) onUpdated(cfgRes.config)
+    } else {
+      setError(res.error ?? 'No se pudo actualizar el efectivo')
+    }
+    setReloading(false)
+  }
+
+  // Etapa 30 (26/08/2026, a pedido explícito del usuario): forma alternativa de cargar los topes
+  // ARS — como % del efectivo real total en vez de un monto fijo. No guarda solo: calcula y llena
+  // los mismos dos campos de abajo (Tope ARS intradiario/diario), el "Guardar" de siempre persiste.
+  function applyPctSplit() {
+    const total = config?.last_known_ars_cash ?? 0
+    const pi = Number(pctIntradia), pd = Number(pctDiario)
+    if (!Number.isFinite(pi) || pi < 0 || !Number.isFinite(pd) || pd < 0) {
+      setError('Los porcentajes tienen que ser números ≥ 0'); return
+    }
+    if (pi + pd > 100) { setError('% intradiario + % diario no puede superar 100%'); return }
+    setError(null)
+    setCapIntradia(String(Math.round(total * pi / 100)))
+    setCapDiario(String(Math.round(total * pd / 100)))
   }
 
   async function saveAmounts() {
@@ -200,10 +233,17 @@ function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | n
             {config.last_known_cash_at ? new Date(config.last_known_cash_at).toLocaleString('es-AR') : 'todavía no'}
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+          <button onClick={reloadCash} disabled={reloading}
+            style={{ ...btn, padding: '6px 12px', fontSize: 12, opacity: reloading ? 0.6 : 1 }}>
+            {reloading ? 'Consultando...' : '↻ Actualizar ahora'}
+          </button>
+        </div>
       </div>
       <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 14 }}>
-        Lo guarda el motor en cada corrida (hasta ~15 min de atraso) — no es en tiempo real. Los
-        topes de abajo no te dejan guardar más de lo que hay acá.
+        Se guarda solo en cada corrida del motor (hasta ~15 min de atraso) — el botón &ldquo;Actualizar
+        ahora&rdquo; consulta IOL al toque, sin esperar al cron. Los topes de abajo no te dejan
+        guardar más de lo que hay acá.
       </div>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -218,6 +258,23 @@ function LiveTradingPanel({ config, onUpdated }: { config: AutoTradingConfig | n
           Saltear gate estadístico: {config.override_statistical_gate ? 'ON' : 'OFF'}
         </button>
         <InfoTip text="Con esto prendido, el motor opera aunque scorecard_bolsas no muestre ninguna bolsa 'validado' — decisión explícita de operar sin edge estadístico confirmado todavía. El resto de los filtros (costo, riesgo) siguen aplicando igual." />
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+            % intradiario del efectivo real
+            <InfoTip text="Alternativa a escribir el Tope ARS intradiario a mano — calcula ese monto como este % del efectivo real ARS de arriba. No guarda solo, sólo llena los campos de abajo; 'Guardar' sigue siendo el que persiste." />
+          </div>
+          <input type="number" step="1" value={pctIntradia} onChange={e => setPctIntradia(e.target.value)} style={{ ...inp, width: 80 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text-hint)', marginBottom: 3 }}>% diario del efectivo real</div>
+          <input type="number" step="1" value={pctDiario} onChange={e => setPctDiario(e.target.value)} style={{ ...inp, width: 80 }} />
+        </div>
+        <button onClick={applyPctSplit} style={{ ...btn, padding: '6px 12px', fontSize: 12, background: 'var(--bg-muted)', color: 'var(--text)' }}>
+          Aplicar % a los topes
+        </button>
       </div>
 
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -333,7 +390,6 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
   const portfolioTrades = trades.filter(t => t.portfolio_id === portfolio.id)
   const { curve, capitalActual, retornoPct } = computeCapitalCurve(portfolio, portfolioTrades)
   const abiertas = portfolioTrades.filter(t => t.status === 'abierta').length
-  const chartData = curve.map(p => ({ date: new Date(p.date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }), capital: p.capital }))
 
   return (
     <div style={card}>
@@ -359,18 +415,7 @@ function PortfolioCard({ currency, portfolio, trades, onCreated }: {
         </div>
       </div>
       {curve.length >= 2 ? (
-        <ResponsiveContainer width="100%" height={120}>
-          <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="date" tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
-            <YAxis hide domain={['auto', 'auto']} />
-            <Tooltip
-              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: MONO, fontSize: 11 }}
-              formatter={(v) => [formatMoney(Number(v), currency), 'Capital']}
-            />
-            <Line type="monotone" dataKey="capital" stroke="var(--text)" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        <EvolutionChart curve={curve} currency={currency} />
       ) : (
         <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>La curva aparece cuando el motor cierre la primera operación.</p>
       )}
@@ -414,7 +459,6 @@ function LiveCapitalCard({ currency, config, trades }: {
     trades,
   )
   const abiertas = trades.filter(t => t.status === 'abierta').length
-  const chartData = curve.map(p => ({ date: new Date(p.date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }), capital: p.capital }))
 
   return (
     <div style={{ ...card, border: '1px solid var(--down)' }}>
@@ -443,18 +487,7 @@ function LiveCapitalCard({ currency, config, trades }: {
         </div>
       </div>
       {curve.length >= 2 ? (
-        <ResponsiveContainer width="100%" height={120}>
-          <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="date" tick={{ fontFamily: MONO, fontSize: 9, fill: 'var(--text-hint)' }} axisLine={false} tickLine={false} />
-            <YAxis hide domain={['auto', 'auto']} />
-            <Tooltip
-              contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: MONO, fontSize: 11 }}
-              formatter={(v) => [formatMoney(Number(v), currency), 'Capital']}
-            />
-            <Line type="monotone" dataKey="capital" stroke="var(--down)" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        <EvolutionChart curve={curve} currency={currency} />
       ) : (
         <p style={{ fontSize: 12, color: 'var(--text-hint)' }}>La curva aparece cuando el motor cierre la primera operación real.</p>
       )}
