@@ -111,10 +111,15 @@ export const DEFAULT_COSTO_IDA_VUELTA_INTRADIA_PCT = 0.85
 //   normal (2 patas, sin bonificación): 0.6655% × 2 = 1.331% ≈ 1.33%
 //   intradía: IOL bonifica al 100% una de las dos patas ("operatoria intradiaria" — venta de lo
 //   comprado hoy, o recompra de lo vendido hoy, mismo símbolo/plazo/moneda, cantidad ≤ la primera
-//   pata), no un descuento parejo del 50% en ambas como hacía Balanz. Sólo paga 1 pata completa:
-//   0.6655% × 1 = 0.6655% ≈ 0.67%
+//   pata), no un descuento parejo del 50% en ambas como hacía Balanz. Teórico: 0.6655% × 1 ≈ 0.67%.
+//
+// Fix (27/08/2026, a pedido explícito del usuario): recalibrado a 0.727%, medido contra 2
+// ida-y-vuelta reales de COME.BA el 26/08/2026 (comisiones reales de las 4 órdenes, no el cálculo
+// teórico de arriba): 44 acciones → compra 0.6656%/venta 0.0603% → total 0.7266%; 5 acciones →
+// compra 0.6644%/venta 0.0578% → total 0.7226%. El teórico 0.67% asumía la pata bonificada en
+// $0 — en la práctica paga un remanente chico (derecho de mercado), no cero.
 const COSTO_IDA_VUELTA_PCT_ARS = 1.33
-const COSTO_IDA_VUELTA_INTRADIA_PCT_ARS = 0.67
+const COSTO_IDA_VUELTA_INTRADIA_PCT_ARS = 0.727
 
 export type CostoConfig = { normal: number; intradia: number }
 
